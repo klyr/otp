@@ -567,7 +567,7 @@ handle_options(Opts0, _Role) ->
 		  depth, cert, certfile, key, keyfile,
 		  password, cacerts, cacertfile, dh, dhfile, ciphers,
 		  debug, reuse_session, reuse_sessions, ssl_imp,
-		  cb_info, renegotiate_at, secure_renegotiate, hibernate_after, erl_dist],
+		  cb_info, renegotiate_at, secure_renegotiate, hibernate_after, erl_dist]
     
     SockOpts = lists:foldl(fun(Key, PropList) -> 
 				   proplists:delete(Key, PropList)

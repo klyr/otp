@@ -32,6 +32,7 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 all() -> [
 	decode_hello_handshake,
 	decode_single_hello_extension_correctly,
+        decode_single_hello_extension_sni_correctly,
 	decode_unknown_hello_extension_correctly].
 
 decode_hello_handshake(_Config) ->
@@ -57,7 +58,12 @@ decode_single_hello_extension_correctly(_Config) ->
 	Renegotiation = <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(1), 0>>,
 	Extensions = ssl_handshake:dec_hello_extensions(Renegotiation, []),
 	[{renegotiation_info,#renegotiation_info{renegotiated_connection = <<0>>}}] = Extensions.
-	
+
+decode_single_hello_extension_sni_correctly(_Config) ->
+    SNI = <<16#00, 16#00, 16#00, 16#0d, 16#00, 16#0b, 16#00, 16#00, 16#08,
+            $t,    $e,    $s,    $t,    $.,    $c,    $o,    $m>>,
+    Extensions = ssl_handshake:dec_hello_extensions(SNI, []),
+    [{sni, #sni{hostname = "test.com"}}] = Extensions.
 
 decode_unknown_hello_extension_correctly(_Config) ->
 	FourByteUnknown = <<16#CA,16#FE, ?UINT16(4), 3, 0, 1, 2>>,

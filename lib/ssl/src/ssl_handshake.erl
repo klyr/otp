@@ -69,13 +69,21 @@ client_hello(Host, Port, ConnectionStates, #ssl_options{versions = Versions,
 
     Id = ssl_manager:client_session_id(Host, Port, SslOpts, OwnCert),
 
+    %% Currently, the only server names supported are DNS hostnames -- RFC 6066
+    %% Section 3
+    SniHost = case inet_parse:domain(Host) of
+                  false -> undefined;
+                  true -> Host
+              end,
+
     #client_hello{session_id = Id, 
 		  client_version = Version,
 		  cipher_suites = cipher_suites(Ciphers, Renegotiation),
 		  compression_methods = ssl_record:compressions(),
 		  random = SecParams#security_parameters.client_random,
 		  renegotiation_info  = 
-		  renegotiation_info(client, ConnectionStates, Renegotiation)
+		  renegotiation_info(client, ConnectionStates, Renegotiation),
+		  sni = SniHost
 		 }.
 
 %%--------------------------------------------------------------------
@@ -828,17 +836,24 @@ dec_hs(?CLIENT_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 		       ?BYTE(SID_length), Session_ID:SID_length/binary,
 		       ?UINT16(Cs_length), CipherSuites:Cs_length/binary,
 		       ?BYTE(Cm_length), Comp_methods:Cm_length/binary,
-		       Extensions/binary>>) ->
-    
-    RenegotiationInfo = proplists:get_value(renegotiation_info, dec_hello_extensions(Extensions),
-					   undefined),    
+		       Extensions0/binary>>) ->
+
+    Extensions = dec_hello_extensions(Extensions0),
+    RenegotiationInfo = proplists:get_value(renegotiation_info, Extensions,
+					   undefined),
+    SNIHostname = case proplists:get_value(sni, Extensions, undefined) of
+                      undefined -> undefined;
+                      SNI -> SNI#sni.hostname
+                  end,
+
     #client_hello{
 	client_version = {Major,Minor},
 	random = Random,
 	session_id = Session_ID,
 	cipher_suites = from_2bytes(CipherSuites),
 	compression_methods = Comp_methods,
-	renegotiation_info = RenegotiationInfo 
+	renegotiation_info = RenegotiationInfo,
+	sni = SNIHostname
        };
 
 dec_hs(?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
@@ -930,6 +945,17 @@ dec_hello_extensions(<<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len), Info:Len/binar
     dec_hello_extensions(Rest, [{renegotiation_info, 
 			   #renegotiation_info{renegotiated_connection = RenegotiateInfo}} | Acc]);
 
+dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(_ExtLength),
+                       ?UINT16(_ServerNameLength), ?BYTE(_NameType),
+                       ?UINT16(HostLen), Hostname:HostLen/binary, Rest/binary>>,
+                     Acc) ->
+    TextHostname = binary_to_list(Hostname),
+    case inet_parse:domain(TextHostname) of
+        true -> dec_hello_extensions(Rest,
+                    [{sni, #sni{hostname = TextHostname}} | Acc]);
+        false -> dec_hello_extensions(Rest, Acc)
+    end;
+
 %% Ignore data following the ClientHello (i.e.,
 %% extensions) if not understood.
 dec_hello_extensions(<<?UINT16(_), ?UINT16(Len), _Unknown:Len/binary, Rest/binary>>, Acc) ->
@@ -971,13 +997,15 @@ enc_hs(#client_hello{client_version = {Major, Minor},
 		     session_id = SessionID,
 		     cipher_suites = CipherSuites,
 		     compression_methods = CompMethods, 
-		     renegotiation_info = RenegotiationInfo}, _Version) ->
+		     renegotiation_info = RenegotiationInfo,
+		     sni = SNIHostname}, _Version) ->
     SIDLength = byte_size(SessionID),
     BinCompMethods = list_to_binary(CompMethods),
     CmLength = byte_size(BinCompMethods),
     BinCipherSuites = list_to_binary(CipherSuites),
     CsLength = byte_size(BinCipherSuites),
-    Extensions  = hello_extensions(RenegotiationInfo),
+    Extensions  = hello_extensions([RenegotiationInfo,
+                                    #sni{hostname = SNIHostname}]),
     ExtensionsBin = enc_hello_extensions(Extensions),
     {?CLIENT_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 		     ?BYTE(SIDLength), SessionID/binary,
@@ -991,7 +1019,7 @@ enc_hs(#server_hello{server_version = {Major, Minor},
 		     compression_method = Comp_method,
 		     renegotiation_info = RenegotiationInfo}, _Version) ->
     SID_length = byte_size(Session_ID),
-    Extensions  = hello_extensions(RenegotiationInfo),
+    Extensions  = hello_extensions([RenegotiationInfo]),
     ExtensionsBin = enc_hello_extensions(Extensions),
     {?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 		     ?BYTE(SID_length), Session_ID/binary,
@@ -1044,11 +1072,17 @@ enc_bin_sig(BinSig) ->
     Size = byte_size(BinSig),
     <<?UINT16(Size), BinSig/binary>>.
 
-%% Renegotiation info, only current extension
-hello_extensions(#renegotiation_info{renegotiated_connection = undefined}) ->
-    [];
-hello_extensions(#renegotiation_info{} = Info) ->
-    [Info].
+hello_extensions(Extensions) -> hello_extensions(Extensions, []).
+
+hello_extensions([], Acc) -> Acc;
+hello_extensions([#renegotiation_info{renegotiated_connection = undefined} | Rest], Acc) ->
+    hello_extensions(Rest, Acc);
+hello_extensions([#renegotiation_info{} = Info | Rest], Acc) ->
+    hello_extensions(Rest, [Info | Acc]);
+hello_extensions([#sni{hostname = undefined} | Rest], Acc) ->
+    hello_extensions(Rest, Acc);
+hello_extensions([#sni{hostname = _Host} = SNI | Rest], Acc) ->
+    hello_extensions(Rest, [SNI | Acc]).
 
 enc_hello_extensions(Extensions) ->
     enc_hello_extensions(Extensions, <<>>).
@@ -1065,7 +1099,20 @@ enc_hello_extensions([#renegotiation_info{renegotiated_connection = ?byte(0) = I
 enc_hello_extensions([#renegotiation_info{renegotiated_connection = Info} | Rest], Acc) ->
     InfoLen = byte_size(Info),
     Len = InfoLen +1,
-    enc_hello_extensions(Rest, <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len), ?BYTE(InfoLen), Info/binary, Acc/binary>>).
+    enc_hello_extensions(Rest, <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len), ?BYTE(InfoLen), Info/binary, Acc/binary>>);
+
+enc_hello_extensions([#sni{hostname = Hostname} | Rest], Acc) ->
+    HostLen = length(Hostname),
+    HostnameBin = list_to_binary(Hostname),
+    % Hostname type (1 byte) + Hostname length (2 bytes) + Hostname (HostLen bytes)
+    ServerNameLength = 1 + 2 + HostLen,
+    % NameTypeLen(1 byte) + (2 bytes) + HostLenSize(2 bytes) + HostLen
+    ExtLength = 1 + 2 + 2 + HostLen,
+    enc_hello_extensions(Rest, <<?UINT16(?SNI_EXT), ?UINT16(ExtLength),
+        ?UINT16(ServerNameLength),
+        ?BYTE(?SNI_NAMETYPE_HOST_NAME),
+        ?UINT16(HostLen), HostnameBin/binary,
+        Acc/binary>>).
 
 
 from_3bytes(Bin3) ->
