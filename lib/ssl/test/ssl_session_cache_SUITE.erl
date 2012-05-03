@@ -215,8 +215,8 @@ session_cleanup(Config)when is_list(Config) ->
     SessionTimer = element(6, State),
 
     Id = proplists:get_value(session_id, SessionInfo),
-    CSession = ssl_session_cache:lookup(Cache, {{Hostname, Port}, Id}),
-    SSession = ssl_session_cache:lookup(Cache, {Port, Id}),
+    CSession = ssl_session_cache:lookup(Cache, {{client, Hostname, Port}, Id}),
+    SSession = ssl_session_cache:lookup(Cache, {{server, undefined, Port}, Id}),
 
     true = CSession =/= undefined,
     true = SSession =/= undefined,
@@ -232,8 +232,8 @@ session_cleanup(Config)when is_list(Config) ->
 
     test_server:sleep(?SLEEP),  %% Make sure clean has had time to run
 
-    undefined = ssl_session_cache:lookup(Cache, {{Hostname, Port}, Id}),
-    undefined = ssl_session_cache:lookup(Cache, {Port, Id}),
+    undefined = ssl_session_cache:lookup(Cache, {{client, Hostname, Port}, Id}),
+    undefined = ssl_session_cache:lookup(Cache, {{server, undefined, Port}, Id}),
 
     process_flag(trap_exit, false),
     ssl_test_lib:close(Server),

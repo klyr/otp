@@ -44,8 +44,8 @@
       U.S. lifted its export restrictions in early 2000.</item>
       <item>CRL and policy certificate
             extensions are not supported yet. </item>
-      <item>Support for 'Server Name Indication' extension client side
-      (RFC 6066 section 3).</item>
+      <item>Support for 'Server Name Indication' extension
+            (RFC 6066 section 3).</item>
     </list>
  
   </section>
@@ -77,7 +77,8 @@
       {keyfile, path()} | {password, string()} |
       {cacerts, [der_encoded()]} | {cacertfile, path()} |
       |{dh, der_encoded()} | {dhfile, path()} | {ciphers, ciphers()} |
-      {ssl_imp, ssl_imp()} | {reuse_sessions, boolean()} | {reuse_session, fun()} 
+      {ssl_imp, ssl_imp()} | {reuse_sessions, boolean()} | {reuse_session, fun()} |
+      {sni_hosts, [{hostname(), [ssloption()]}]}
     </c></p>
 
     <p><c>transportoption() = {CallbackModule, DataTag, ClosedTag}
@@ -353,6 +354,35 @@ fun(OtpCert :: #'OTPCertificate'{}, Event :: {bad_cert, Reason :: atom()} |
       and CipherSuite is of type ciphersuite().
       </item>
 
+      <tag>{sni_hosts, [{hostname(), [ssloption()]}]}</tag>
+      <item>Enable Server Name Indication server support. Allows the server to
+      use different SSL parameters based on SNI servername specified by
+      client. For example a server can present multiple certificates on the same
+      ip address and port number. This is a kind of virtualhost for SSL
+      connections. Use the <c>ssl:sni_hostname/1</c> function to get the
+      selected host. Overridable options are <c>verify</c>, <c>verify_fun</c>,
+      <c>fail_if_no_peer_cert</c>, <c>depth</c>, <c>cert</c>, <c>certfile</c>,
+      <c>key</c>, <c>keyfile</c>, <c>password</c>, <c>cacerts</c>,
+      <c>cacertfile</c>, <c>dhfile</c>, <c>ciphers</c>, <c>reuse_sessions</c>,
+      <c>reuse_session</c>.
+
+      Usage example:
+      <code>
+        {ok, ListenSocket} = ssl:listen(Port, [
+                              {certfile, "default.crt"},
+                              {keyfile, "default.key"},
+                              {verify, verify_none},
+                              {sni_hosts,
+                                  [{"vhost1.example.com",
+                                       [{certfile, "vhost1.example.com.crt"},
+                                        {keyfile, "vhost1.example.com.key"}]},
+                                   {"vhost2.example.org",
+                                       [{verify, verify_peer}]}]}]),
+        {ok, TS} = ssl:transport_accept(ListenSocket),
+        S = ssl:ssl_accept(TS),
+        SelectedHost = ssl:sni_hostname(S).
+      </code>
+      </item>
     </taglist>
   </section>
   
@@ -680,6 +710,20 @@ fun(OtpCert :: #'OTPCertificate'{}, Event :: {bad_cert, Reason :: atom()} |
       </desc>
     </func>
     
+    <func>
+      <name>sni_hostname(Socket) -> undefined | list()</name>
+      <fsummary>Returns the hostname selected by the server if SNI extension was
+      used. Else return undefined, meaning that the default configuration has
+      been choosen</fsummary>
+      <type>
+        <v>Socket = sslsocket()</v>
+      </type>
+      <desc>
+        <p>Use this function when the SSL handshake is finished to know what was
+        the requested SNI hostname.</p>
+      </desc>
+    </func>
+
     <func>
       <name>sockname(Socket) -> {ok, {Address, Port}} |
 	{error, Reason}</name>

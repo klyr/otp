@@ -30,9 +30,8 @@
 -export([start_link/1, start_link_dist/1,
 	 connection_init/2, cache_pem_file/2,
 	 lookup_trusted_cert/4,
-	 client_session_id/4, server_session_id/4,
-	 register_session/2, register_session/3, invalidate_session/2,
-	 invalidate_session/3]).
+	 client_session_id/4, server_session_id/5,
+	 register_session/4, invalidate_session/4]).
 
 % Spawn export
 -export([init_session_validator/1]).
@@ -123,38 +122,31 @@ client_session_id(Host, Port, SslOpts, OwnCert) ->
     call({client_session_id, Host, Port, SslOpts, OwnCert}).
 
 %%--------------------------------------------------------------------
--spec server_session_id(host(), inet:port_number(), #ssl_options{},
-			der_cert()) -> session_id().
+-spec server_session_id(host(), inet:port_number(), session_id(),
+                        #ssl_options{}, der_cert()) -> session_id().
 %%
 %% Description: Select a session id for the server.
 %%--------------------------------------------------------------------
-server_session_id(Port, SuggestedSessionId, SslOpts, OwnCert) ->
-    call({server_session_id, Port, SuggestedSessionId, SslOpts, OwnCert}).
+server_session_id(Host, Port, SuggestedSessionId, SslOpts, OwnCert) ->
+    call({server_session_id, Host, Port, SuggestedSessionId, SslOpts, OwnCert}).
 
 %%--------------------------------------------------------------------
--spec register_session(inet:port_number(), #session{}) -> ok.
--spec register_session(host(), inet:port_number(), #session{}) -> ok.
+-spec register_session(atom(), host(), inet:port_number(), #session{}) -> ok.
 %%
 %% Description: Make the session available for reuse.
 %%--------------------------------------------------------------------
-register_session(Host, Port, Session) ->
-    cast({register_session, Host, Port, Session}).
+register_session(Role, Host, Port, Session) ->
+    cast({register_session, Role, Host, Port, Session}).
 
-register_session(Port, Session) ->
-    cast({register_session, Port, Session}).
 %%--------------------------------------------------------------------
--spec invalidate_session(inet:port_number(), #session{}) -> ok.
--spec invalidate_session(host(), inet:port_number(), #session{}) -> ok.
+-spec invalidate_session(atom(), host(), inet:port_number(), #session{}) -> ok.
 %%
 %% Description: Make the session unavailable for reuse. After
 %% a the session has been marked "is_resumable = false" for some while
 %% it will be safe to remove the data from the session database.
 %%--------------------------------------------------------------------
-invalidate_session(Host, Port, Session) ->
-    cast({invalidate_session, Host, Port, Session}).
-
-invalidate_session(Port, Session) ->
-    cast({invalidate_session, Port, Session}).
+invalidate_session(Role, Host, Port, Session) ->
+    cast({invalidate_session, Role, Host, Port, Session}).
 
 %%====================================================================
 %% gen_server callbacks
@@ -221,11 +213,12 @@ handle_call({{client_session_id, Host, Port, SslOpts, OwnCert}, _}, _,
     Id = ssl_session:id({Host, Port, SslOpts}, Cache, CacheCb, OwnCert),
     {reply, Id, State};
 
-handle_call({{server_session_id, Port, SuggestedSessionId, SslOpts, OwnCert}, _},
+handle_call({{server_session_id, Host, Port, SuggestedSessionId, SslOpts,
+              OwnCert}, _},
 	    _, #state{session_cache_cb = CacheCb,
 		      session_cache = Cache,
 		      session_lifetime = LifeTime} = State) ->
-    Id = ssl_session:id(Port, SuggestedSessionId, SslOpts,
+    Id = ssl_session:id(Host, Port, SuggestedSessionId, SslOpts,
 			Cache, CacheCb, LifeTime, OwnCert),
     {reply, Id, State};
 
@@ -252,33 +245,20 @@ handle_call({{recache_pem, File, LastWrite}, Pid}, From,
 %%
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
-handle_cast({register_session, Host, Port, Session}, 
+handle_cast({register_session, Role, Host, Port, Session},
 	    #state{session_cache = Cache,
 		   session_cache_cb = CacheCb} = State) ->
     TimeStamp = calendar:datetime_to_gregorian_seconds({date(), time()}),
     NewSession = Session#session{time_stamp = TimeStamp},
-    CacheCb:update(Cache, {{Host, Port}, 
+    CacheCb:update(Cache, {{Role, Host, Port},
 		   NewSession#session.session_id}, NewSession),
     {noreply, State};
 
-handle_cast({register_session, Port, Session},  
-	    #state{session_cache = Cache,
-		   session_cache_cb = CacheCb} = State) ->    
-    TimeStamp = calendar:datetime_to_gregorian_seconds({date(), time()}),
-    NewSession = Session#session{time_stamp = TimeStamp},
-    CacheCb:update(Cache, {Port, NewSession#session.session_id}, NewSession),
-    {noreply, State};
-
-handle_cast({invalidate_session, Host, Port,
+handle_cast({invalidate_session, Role, Host, Port,
 	     #session{session_id = ID} = Session},
 	    #state{session_cache = Cache,
 		   session_cache_cb = CacheCb} = State) ->
-    invalidate_session(Cache, CacheCb, {{Host, Port}, ID}, Session, State);
-
-handle_cast({invalidate_session, Port, #session{session_id = ID} = Session},
-	    #state{session_cache = Cache,
-		   session_cache_cb = CacheCb} = State) ->
-    invalidate_session(Cache, CacheCb, {Port, ID}, Session, State);
+    invalidate_session(Cache, CacheCb, {{Role, Host, Port}, ID}, Session, State);
 
 handle_cast({recache_pem, File, LastWrite, Pid, From},
 	    #state{certificate_db = [_, FileToRefDb, _]} = State0) ->
@@ -374,22 +354,14 @@ call(Msg) ->
 cast(Msg) ->
     gen_server:cast(get(ssl_manager), Msg).
  
-validate_session(Host, Port, Session, LifeTime) ->
+validate_session(Role, Host, Port, Session, LifeTime) ->
     case ssl_session:valid_session(Session, LifeTime) of
 	true ->
 	    ok;
 	false ->
-	    invalidate_session(Host, Port, Session)
+	    invalidate_session(Role, Host, Port, Session)
     end.
 
-validate_session(Port, Session, LifeTime) ->
-    case ssl_session:valid_session(Session, LifeTime) of
-	true ->
-	    ok;
-	false ->
-	    invalidate_session(Port, Session)
-    end.
-		    
 start_session_validator(Cache, CacheCb, LifeTime) ->
     spawn_link(?MODULE, init_session_validator, 
 	       [[get(ssl_manager), Cache, CacheCb, LifeTime]]).
@@ -399,11 +371,8 @@ init_session_validator([SslManagerName, Cache, CacheCb, LifeTime]) ->
     CacheCb:foldl(fun session_validation/2,
 		  LifeTime, Cache).
 
-session_validation({{{Host, Port}, _}, Session}, LifeTime) ->
-    validate_session(Host, Port, Session, LifeTime),
-    LifeTime;
-session_validation({{Port, _}, Session}, LifeTime) ->
-    validate_session(Port, Session, LifeTime),
+session_validation({{{Role, Host, Port}, _}, Session}, LifeTime) ->
+    validate_session(Role, Host, Port, Session, LifeTime),
     LifeTime.
 
 cache_pem_file(File, LastWrite, DbHandle) ->
@@ -444,7 +413,7 @@ invalidate_session(Cache, CacheCb, Key, Session, #state{last_delay_timer = LastT
 	    {noreply, State#state{last_delay_timer = last_delay_timer(Key, TRef, LastTimer)}}
     end.
 
-last_delay_timer({{_,_},_}, TRef, {LastServer, _}) ->
+last_delay_timer({{client,_,_},_}, TRef, {LastServer, _}) ->
     {LastServer, TRef};
-last_delay_timer({_,_}, TRef, {_, LastClient}) ->
+last_delay_timer({{server,_,_},_}, TRef, {_, LastClient}) ->
     {TRef, LastClient}.

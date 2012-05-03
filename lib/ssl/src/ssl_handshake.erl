@@ -30,7 +30,7 @@
 -include("ssl_internal.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
--export([master_secret/4, client_hello/6, server_hello/4, hello/4,
+-export([master_secret/4, client_hello/6, server_hello/5, hello/4,
 	 hello_request/0, certify/7, certificate/4,
 	 client_certificate_verify/5, certificate_verify/5,
 	 certificate_request/3, key_exchange/2, server_key_exchange_hash/2,
@@ -87,12 +87,12 @@ client_hello(Host, Port, ConnectionStates, #ssl_options{versions = Versions,
 		 }.
 
 %%--------------------------------------------------------------------
--spec server_hello(session_id(), tls_version(), #connection_states{}, 
-		   boolean()) -> #server_hello{}.
+-spec server_hello(session_id(), tls_version(), #connection_states{},
+		   boolean(), inet:hostname()|undefined) -> #server_hello{}.
 %%
 %% Description: Creates a server hello message.
 %%--------------------------------------------------------------------
-server_hello(SessionId, Version, ConnectionStates, Renegotiation) ->
+server_hello(SessionId, Version, ConnectionStates, Renegotiation, SNI) ->
     Pending = ssl_record:pending_connection_state(ConnectionStates, read),
     SecParams = Pending#connection_state.security_parameters,
     #server_hello{server_version = Version,
@@ -102,7 +102,8 @@ server_hello(SessionId, Version, ConnectionStates, Renegotiation) ->
 		  random = SecParams#security_parameters.server_random,
 		  session_id = SessionId,
 		  renegotiation_info = 
-		  renegotiation_info(server, ConnectionStates, Renegotiation)
+		  renegotiation_info(server, ConnectionStates, Renegotiation),
+                  sni = SNI
 		 }.
 
 %%--------------------------------------------------------------------
@@ -148,7 +149,8 @@ hello(#server_hello{cipher_suite = CipherSuite, server_version = Version,
 			       
 hello(#client_hello{client_version = ClientVersion, random = Random,
 		    cipher_suites = CipherSuites,
-		    renegotiation_info = Info} = Hello,
+		    renegotiation_info = Info,
+                   sni = Host} = Hello,
       #ssl_options{versions = Versions, 
 		   secure_renegotiate = SecureRenegotation} = SslOpts,
       {Port, Session0, Cache, CacheCb, ConnectionStates0, Cert}, Renegotiation) ->
@@ -157,8 +159,8 @@ hello(#client_hello{client_version = ClientVersion, random = Random,
 	true ->
 	    {Type, #session{cipher_suite = CipherSuite,
 			    compression_method = Compression} = Session} 
-		= select_session(Hello, Port, Session0, Version, 
-				 SslOpts, Cache, CacheCb, Cert),
+                = select_session(Hello, Host, Port, Session0, Version,
+                                 SslOpts, Cache, CacheCb, Cert),
 	    case CipherSuite of 
 		no_suite ->
 		    ?ALERT_REC(?FATAL, ?INSUFFICIENT_SECURITY);
@@ -592,10 +594,10 @@ path_validation_alert({bad_cert, unknown_ca}) ->
 path_validation_alert(_) ->
     ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE).
 
-select_session(Hello, Port, Session, Version, 
+select_session(Hello, Host, Port, Session, Version,
 	       #ssl_options{ciphers = UserSuites} = SslOpts, Cache, CacheCb, Cert) ->
     SuggestedSessionId = Hello#client_hello.session_id,
-    SessionId = ssl_manager:server_session_id(Port, SuggestedSessionId, 
+    SessionId = ssl_manager:server_session_id(Host, Port, SuggestedSessionId,
 					      SslOpts, Cert),
     
     Suites = available_suites(Cert, UserSuites, Version), 
@@ -609,7 +611,7 @@ select_session(Hello, Port, Session, Version,
 				  cipher_suite = CipherSuite,
 				  compression_method = Compression}};
 	false ->	    
-	    {resumed, CacheCb:lookup(Cache, {Port, SessionId})}
+	    {resumed, CacheCb:lookup(Cache, {{server, Host, Port}, SessionId})}
     end.
 
 available_suites(UserSuites, Version) ->
@@ -870,10 +872,11 @@ dec_hs(?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 dec_hs(?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 		       ?BYTE(SID_length), Session_ID:SID_length/binary,
 		       Cipher_suite:2/binary, ?BYTE(Comp_method), 
-		       ?UINT16(ExtLen), Extensions:ExtLen/binary>>) ->
-    
-    RenegotiationInfo = proplists:get_value(renegotiation_info, dec_hello_extensions(Extensions, []),
-					   undefined),   
+		       ?UINT16(ExtLen), Extensions0:ExtLen/binary>>) ->
+
+    Extensions = dec_hello_extensions(Extensions0, []),
+    RenegotiationInfo = proplists:get_value(renegotiation_info, Extensions,
+					   undefined),
     #server_hello{
 	server_version = {Major,Minor},
 	random = Random,
@@ -1017,9 +1020,14 @@ enc_hs(#server_hello{server_version = {Major, Minor},
 		     session_id = Session_ID,
 		     cipher_suite = Cipher_suite,
 		     compression_method = Comp_method,
-		     renegotiation_info = RenegotiationInfo}, _Version) ->
+		     renegotiation_info = RenegotiationInfo,
+                     sni = SNIHostname}, _Version) ->
     SID_length = byte_size(Session_ID),
-    Extensions  = hello_extensions([RenegotiationInfo]),
+    SNIExt = case SNIHostname of
+                 undefined -> [];
+                 _ -> [#sni{hostname = SNIHostname}]
+             end,
+    Extensions  = hello_extensions([RenegotiationInfo] ++ SNIExt),
     ExtensionsBin = enc_hello_extensions(Extensions),
     {?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 		     ?BYTE(SID_length), Session_ID/binary,
@@ -1101,6 +1109,9 @@ enc_hello_extensions([#renegotiation_info{renegotiated_connection = Info} | Rest
     Len = InfoLen +1,
     enc_hello_extensions(Rest, <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(Len), ?BYTE(InfoLen), Info/binary, Acc/binary>>);
 
+enc_hello_extensions([#sni{hostname = undefined} | Rest], _Acc) ->
+    % Send empty SNI extension in server_hello
+    enc_hello_extensions(Rest, <<?UINT16(?SNI_EXT), ?UINT16(0)>>);
 enc_hello_extensions([#sni{hostname = Hostname} | Rest], Acc) ->
     HostLen = length(Hostname),
     HostnameBin = list_to_binary(Hostname),

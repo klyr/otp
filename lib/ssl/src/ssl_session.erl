@@ -28,7 +28,7 @@
 -include("ssl_internal.hrl").
 
 %% Internal application API
--export([is_new/2, id/4, id/7, valid_session/2]).
+-export([is_new/2, id/4, id/8, valid_session/2]).
 
 -define(GEN_UNIQUE_ID_MAX_TRIES, 10).
 
@@ -63,24 +63,24 @@ id(ClientInfo, Cache, CacheCb, OwnCert) ->
     end.
 
 %%--------------------------------------------------------------------
--spec id(inet:port_number(), binary(), #ssl_options{}, db_handle(),
+-spec id(host(), inet:port_number(), binary(), #ssl_options{}, db_handle(),
 	 atom(), seconds(), binary()) -> binary().
 %%
 %% Description: Should be called by the server side to get an id 
 %%              for the server hello message.
 %%--------------------------------------------------------------------
-id(Port, <<>>, _, Cache, CacheCb, _, _) ->
-    new_id(Port, ?GEN_UNIQUE_ID_MAX_TRIES, Cache, CacheCb);
+id(Host, Port, <<>>, _, Cache, CacheCb, _, _) ->
+    new_id(Host, Port, ?GEN_UNIQUE_ID_MAX_TRIES, Cache, CacheCb);
 
-id(Port, SuggestedSessionId, #ssl_options{reuse_sessions = ReuseEnabled,
+id(Host, Port, SuggestedSessionId, #ssl_options{reuse_sessions = ReuseEnabled,
 					  reuse_session = ReuseFun}, 
    Cache, CacheCb, SecondLifeTime, OwnCert) ->
-    case is_resumable(SuggestedSessionId, Port, ReuseEnabled, 
+    case is_resumable(SuggestedSessionId, Host, Port, ReuseEnabled,
 		      ReuseFun, Cache, CacheCb, SecondLifeTime, OwnCert) of
 	true ->
 	    SuggestedSessionId;
 	false ->
-	    new_id(Port, ?GEN_UNIQUE_ID_MAX_TRIES, Cache, CacheCb)
+	    new_id(Host, Port, ?GEN_UNIQUE_ID_MAX_TRIES, Cache, CacheCb)
     end.
 %%--------------------------------------------------------------------
 -spec valid_session(#session{}, seconds()) -> boolean().
@@ -95,7 +95,7 @@ valid_session(#session{time_stamp = TimeStamp}, LifeTime) ->
 %%% Internal functions
 %%--------------------------------------------------------------------
 select_session({HostIP, Port, SslOpts}, Cache, CacheCb, OwnCert) ->
-    Sessions = CacheCb:select_session(Cache, {HostIP, Port}),
+    Sessions = CacheCb:select_session(Cache, {client, HostIP, Port}),
     select_session(Sessions, SslOpts, OwnCert).
 
 select_session([], _, _) ->
@@ -123,27 +123,27 @@ select_session(Sessions, #ssl_options{ciphers = Ciphers,
 %% ?GEN_UNIQUE_ID_MAX_TRIES either the RAND code is broken or someone
 %% is trying to open roughly very close to 2^128 (or 2^256) SSL
 %% sessions to our server"
-new_id(_, 0, _, _) ->
+new_id(_, _, 0, _, _) ->
     <<>>;
-new_id(Port, Tries, Cache, CacheCb) ->
+new_id(Host, Port, Tries, Cache, CacheCb) ->
     Id = crypto:rand_bytes(?NUM_OF_SESSION_ID_BYTES),
-    case CacheCb:lookup(Cache, {Port, Id}) of
+    case CacheCb:lookup(Cache, {{server, Host, Port}, Id}) of
 	undefined ->
 	    Now =  calendar:datetime_to_gregorian_seconds({date(), time()}),
 	    %% New sessions can not be set to resumable
 	    %% until handshake is compleate and the
 	    %% other session values are set.
-	    CacheCb:update(Cache, {Port, Id}, #session{session_id = Id,
-						       is_resumable = false,
-						       time_stamp = Now}),
+	    CacheCb:update(Cache, {{server, Host, Port}, Id},
+                       #session{session_id = Id, is_resumable = false,
+                                time_stamp = Now}),
 	    Id;
 	_ ->
-	    new_id(Port, Tries - 1, Cache, CacheCb)
+	    new_id(Host, Port, Tries - 1, Cache, CacheCb)
     end.
 
-is_resumable(SuggestedSessionId, Port, ReuseEnabled, ReuseFun, Cache, 
+is_resumable(SuggestedSessionId, Host, Port, ReuseEnabled, ReuseFun, Cache,
 	     CacheCb, SecondLifeTime, OwnCert) ->
-    case CacheCb:lookup(Cache, {Port, SuggestedSessionId}) of
+    case CacheCb:lookup(Cache, {{server, Host, Port}, SuggestedSessionId}) of
 	#session{cipher_suite = CipherSuite,
 		 own_certificate = SessionOwnCert,
 		 compression_method = Compression,

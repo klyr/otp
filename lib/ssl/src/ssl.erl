@@ -30,7 +30,7 @@
 	 controlling_process/2, listen/2, pid/1, peername/1, peercert/1,
 	 recv/2, recv/3, send/2, getopts/2, setopts/2, sockname/1,
 	 versions/0, session_info/1, format_error/1,
-	 renegotiate/1, prf/5]).
+	 renegotiate/1, prf/5, sni_hostname/1]).
 
 -deprecated({pid, 1, next_major_release}).
 
@@ -191,7 +191,7 @@ transport_accept(#sslsocket{pid = {ListenSocket, #config{cb=CbInfo, ssl=SslOpts}
 	{ok, Socket} ->
 	    ok = inet:setopts(ListenSocket, InetValues),
 	    {ok, Port} = inet:port(Socket),
-	    ConnArgs = [server, "localhost", Port, Socket,
+	    ConnArgs = [server, undefined, Port, Socket,
 			{SslOpts, socket_options(InetValues)}, self(), CbInfo],
 	    case ssl_connection_sup:start_child(ConnArgs) of
 		{ok, Pid} ->
@@ -431,6 +431,13 @@ prf(#sslsocket{pid = Pid, fd = new_ssl},
     Secret, Label, Seed, WantedLength) ->
     ssl_connection:prf(Pid, Secret, Label, Seed, WantedLength).
 
+%%
+%% Description: Returns the selected server name choosen by the server, or
+%% returns undefined if the default configuration was choosen
+%% --------------------------------------------------------------------
+sni_hostname(#sslsocket{pid = Pid, fd = new_ssl}) ->
+    ssl_connection:sni_hostname(Pid).
+
 %%---------------------------------------------------------------
 -spec format_error({error, term()}) -> list().
 %%
@@ -533,6 +540,7 @@ handle_options(Opts0, _Role) ->
 	end,
 
     CertFile = handle_option(certfile, Opts, ""),
+    Hosts = handle_option(sni_hosts, Opts, []),
     
     SSLOptions = #ssl_options{
       versions   = handle_option(versions, Opts, []),
@@ -558,7 +566,8 @@ handle_options(Opts0, _Role) ->
       renegotiate_at = handle_option(renegotiate_at, Opts, ?DEFAULT_RENEGOTIATE_AT),
       debug      = handle_option(debug, Opts, []),
       hibernate_after = handle_option(hibernate_after, Opts, undefined),
-      erl_dist = handle_option(erl_dist, Opts, false)
+      erl_dist = handle_option(erl_dist, Opts, false),
+      sni_hosts  = Hosts
      },
 
     CbInfo  = proplists:get_value(cb_info, Opts, {gen_tcp, tcp, tcp_closed, tcp_error}),    
@@ -567,7 +576,8 @@ handle_options(Opts0, _Role) ->
 		  depth, cert, certfile, key, keyfile,
 		  password, cacerts, cacertfile, dh, dhfile, ciphers,
 		  debug, reuse_session, reuse_sessions, ssl_imp,
-		  cb_info, renegotiate_at, secure_renegotiate, hibernate_after, erl_dist]
+		  cb_info, renegotiate_at, secure_renegotiate, hibernate_after, erl_dist,
+		  sni_hosts],
     
     SockOpts = lists:foldl(fun(Key, PropList) -> 
 				   proplists:delete(Key, PropList)
@@ -681,6 +691,8 @@ validate_option(hibernate_after, Value) when is_integer(Value), Value >= 0 ->
     Value;
 validate_option(erl_dist,Value) when Value == true; 
 				     Value == false ->
+    Value;
+validate_option(sni_hosts, Value) when is_list(Value) ->
     Value;
 validate_option(Opt, Value) ->
     throw({error, {eoptions, {Opt, Value}}}).

@@ -208,6 +208,7 @@ all() ->
     [app, alerts, connection_info, protocol_versions,
      empty_protocol_versions, controlling_process,
      controller_dies, client_closes_socket,
+     sni_server_default, sni_server_select,
      connect_dist, peername, peercert, sockname, socket_options,
      invalid_inet_get_option, invalid_inet_get_option_not_list,
      invalid_inet_get_option_improper_list,
@@ -614,8 +615,66 @@ client_closes_socket(Config) when is_list(Config) ->
     ssl_test_lib:check_result(Server, {error,closed}).
 
 %%--------------------------------------------------------------------
-connect_dist(doc) -> 
-    ["Test a simple connect as is used by distribution"];
+sni_server_default(doc) ->
+    ["Check that a server select default server (undefined) when SNI hostname is
+     not recognized"];
+sni_server_default(suite) -> [];
+sni_server_default(Config) when is_list(Config) ->
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {?MODULE, sni_hostname_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+                                        {host, Hostname},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ClientOpts}]),
+
+    SelectedSNI = undefined,
+    ssl_test_lib:check_result(Server, SelectedSNI),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+sni_hostname_result(Socket) ->
+    ssl:sni_hostname(Socket).
+
+%%--------------------------------------------------------------------
+sni_server_select(doc) ->
+    ["Check that a server select the good server configuration when asked by
+    client"];
+sni_server_select(suite) -> [];
+sni_server_select(Config) when is_list(Config) ->
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    SNIOpts = {sni_hosts, [{Hostname, [{verify, verify_peer},
+                                       {fail_if_no_peer_cert, true}]}]},
+    Server = ssl_test_lib:start_server_error([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {options, [SNIOpts | ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client_error(
+               [{node, ClientNode}, {port, Port},
+                {host, Hostname},
+                {from, self()},
+                {mfa, {ssl_test_lib, no_result, []}},
+                {options,
+                 [proplists:delete(certfile, ClientOpts)]}]),
+
+    ssl_test_lib:check_result(Server, {error, esslaccept}, Client, {error, esslconnect}),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+%%--------------------------------------------------------------------
+connect_dist(doc) -> ["Test a simple connect as is used by distribution"];
 
 connect_dist(suite) -> 
     [];

@@ -41,7 +41,7 @@
 	 socket_control/3, close/1, shutdown/2,
 	 new_user/2, get_opts/2, set_opts/2, info/1, session_info/1, 
 	 peer_certificate/1, sockname/1, peername/1, renegotiation/1,
-	 prf/5]).
+	 prf/5, sni_hostname/1]).
 
 %% Called by ssl_connection_sup
 -export([start_link/7]). 
@@ -151,7 +151,7 @@ connect(Host, Port, Socket, Options, User, CbInfo, Timeout) ->
 %%              ssl handshake. 
 %%--------------------------------------------------------------------
 ssl_accept(Port, Socket, Opts, User, CbInfo, Timeout) ->
-    try start_fsm(server, "localhost", Port, Socket, Opts, User, 
+    try start_fsm(server, undefined, Port, Socket, Opts, User,
 		  CbInfo, Timeout)
     catch
 	exit:{noproc, _} ->
@@ -284,6 +284,12 @@ renegotiation(ConnectionPid) ->
 prf(ConnectionPid, Secret, Label, Seed, WantedLength) ->
     sync_send_all_state_event(ConnectionPid, {prf, Secret, Label, Seed, WantedLength}).
 
+%%
+%% Description: Returns the selected server name choosen by the server, or
+%% returns undefined if the default configuration was choosen
+sni_hostname(ConnectionPid) ->
+    sync_send_all_state_event(ConnectionPid, sni_hostname).
+
 %%====================================================================
 %% ssl_connection_sup API
 %%====================================================================
@@ -403,7 +409,7 @@ hello(#server_hello{cipher_suite = CipherSuite,
             {stop, normal, State0}
     end;
 
-hello(Hello = #client_hello{client_version = ClientVersion}, 
+hello(Hello = #client_hello{client_version = ClientVersion, sni = undefined},
       State = #state{connection_states = ConnectionStates0,
 		     port = Port, session = #session{own_certificate = Cert} = Session0,
 		     renegotiation = {Renegotiation, _},
@@ -420,6 +426,35 @@ hello(Hello = #client_hello{client_version = ClientVersion},
         #alert{} = Alert ->
             handle_own_alert(Alert, ClientVersion, hello, State), 
             {stop, normal, State}
+    end;
+
+hello(Hello = #client_hello{sni = SNI}, State0) ->
+    {Hostname, SslOpts} = update_ssl_options(SNI, State0#state.ssl_options),
+    case Hostname of
+        undefined ->
+            hello(Hello#client_hello{sni = undefined}, State0);
+        _ ->
+            %% redo ssl initialization with new parameters for the specified
+            %% hostname
+            try ssl_init(SslOpts, State0#state.role) of
+                {ok, Ref, CertDbHandle, CacheHandle, OwnCert, Key, DHParams} ->
+                    Session = State0#state.session,
+                    State = State0#state{
+                              ssl_options = SslOpts#ssl_options{
+                                              password = undefined},
+                              session = Session#session{
+                                          own_certificate = OwnCert},
+                              cert_db_ref = Ref,
+                              cert_db = CertDbHandle,
+                              session_cache = CacheHandle,
+                              private_key = Key,
+                              diffie_hellman_params = DHParams,
+                              host = Hostname},
+                    hello(Hello#client_hello{sni = undefined}, State)
+                catch
+                    throw:Error ->
+                        {stop, Error}
+                end
     end;
 
 hello(timeout, State) ->
@@ -923,7 +958,10 @@ handle_sync_event(session_info, _, StateName,
 handle_sync_event(peer_certificate, _, StateName, 
 		  #state{session = #session{peer_certificate = Cert}} 
 		  = State) ->
-    {reply, {ok, Cert}, StateName, State, get_timeout(State)}.
+    {reply, {ok, Cert}, StateName, State, get_timeout(State)};
+
+handle_sync_event(sni_hostname, _, StateName, #state{host = Host} = State) ->
+    {reply, Host, StateName, State, get_timeout(State)}.
 
 %%--------------------------------------------------------------------
 %% Description: This function is called by a gen_fsm when it receives any
@@ -1263,12 +1301,20 @@ verify_client_cert(#state{client_certificate_requested = false} = State) ->
 do_server_hello(Type, #state{negotiated_version = Version,
 			     session = #session{session_id = SessId} = Session,
 			     connection_states = ConnectionStates0,
-			     renegotiation = {Renegotiation, _}} 
+			     renegotiation = {Renegotiation, _},
+                             host = SNI0}
 		= State0) when is_atom(Type) -> 
+
+    %% When resuming a session, the server MUST NOT include a server_name
+    %% extension in the server hello.
+    SNI = case Type of
+              new -> SNI0;
+              resumed -> undefined
+          end,
 
     ServerHello = 
         ssl_handshake:server_hello(SessId, Version, 
-                                   ConnectionStates0, Renegotiation),
+                                   ConnectionStates0, Renegotiation, SNI),
     State1 = server_hello(ServerHello, State0),
     
     case Type of	
@@ -1323,10 +1369,10 @@ handle_new_session(NewId, CipherSuite, Compression, #state{session = Session0} =
 
 handle_resumed_session(SessId, #state{connection_states = ConnectionStates0,
 				      negotiated_version = Version,
-				      host = Host, port = Port,
+				      host = Host, port = Port, role = Role,
 				      session_cache = Cache,
 				      session_cache_cb = CacheCb} = State0) ->
-    Session = CacheCb:lookup(Cache, {{Host, Port}, SessId}),
+    Session = CacheCb:lookup(Cache, {{Role, Host, Port}, SessId}),
     case ssl_handshake:master_secret(Version, Session, 
 				     ConnectionStates0, client) of
 	{_, ConnectionStates1} ->	
@@ -2021,21 +2067,15 @@ next_state_is_connection(StateName, State0) ->
 					       public_key_info = undefined,
 					       tls_handshake_hashes = {<<>>, <<>>}}).
 
-register_session(client, Host, Port, #session{is_resumable = new} = Session0) ->
+register_session(Role, Host, Port, #session{is_resumable = new} = Session0) ->
     Session = Session0#session{is_resumable = true},
-    ssl_manager:register_session(Host, Port, Session),
-    Session;
-register_session(server, _, Port, #session{is_resumable = new} = Session0) ->
-    Session = Session0#session{is_resumable = true},
-    ssl_manager:register_session(Port, Session),
+    ssl_manager:register_session(Role, Host, Port, Session),
     Session;
 register_session(_, _, _, Session) ->
     Session. %% Already registered
 
-invalidate_session(client, Host, Port, Session) ->
-    ssl_manager:invalidate_session(Host, Port, Session);
-invalidate_session(server, _, Port, Session) ->
-    ssl_manager:invalidate_session(Port, Session).
+invalidate_session(Role, Host, Port, Session) ->
+    ssl_manager:invalidate_session(Role, Host, Port, Session).
 
 initial_state(Role, Host, Port, Socket, {SSLOptions, SocketOptions}, User,
 	      {CbModule, DataTag, CloseTag, ErrorTag}) ->
@@ -2363,3 +2403,37 @@ get_timeout(#state{ssl_options=#ssl_options{hibernate_after=undefined}}) ->
     infinity;
 get_timeout(#state{ssl_options=#ssl_options{hibernate_after=HibernateAfter}}) ->
     HibernateAfter.
+
+%% Override main ssl options with sni host options if present
+update_ssl_options(undefined, SslOpts) ->
+    {undefined, SslOpts#ssl_options{sni_hosts = undefined}};
+update_ssl_options(Hostname, SslOpts) ->
+    case proplists:get_value(Hostname, SslOpts#ssl_options.sni_hosts,
+                             undefined) of
+        undefined ->
+            {undefined, SslOpts#ssl_options{sni_hosts = undefined}};
+        HostConf ->
+            %% Overridable options when sni hostname is specified
+            NewOpts =
+                lists:foldl(
+                  fun({verify, Verify}, AccOpts)             -> AccOpts#ssl_options{verify = Verify};
+                     ({verify_fun, VerifyFun}, AccOpts)      -> AccOpts#ssl_options{verify_fun = VerifyFun};
+                     ({fail_if_no_peer_cert, Fail}, AccOpts) -> AccOpts#ssl_options{fail_if_no_peer_cert = Fail};
+                     ({depth, Depth}, AccOpts)               -> AccOpts#ssl_options{depth = Depth};
+                     ({cert, Cert}, AccOpts)                 -> AccOpts#ssl_options{cert = Cert};
+                     ({certfile, Certfile}, AccOpts)         -> AccOpts#ssl_options{certfile = Certfile};
+                     ({key, Key}, AccOpts)                   -> AccOpts#ssl_options{key = Key};
+                     ({keyfile, Keyfile}, AccOpts)           -> AccOpts#ssl_options{keyfile = Keyfile};
+                     ({password, Password}, AccOpts)         -> AccOpts#ssl_options{password = Password};
+                     ({cacerts, CaCerts}, AccOpts)           -> AccOpts#ssl_options{cacerts = CaCerts};
+                     ({cacertfile, CaCertFile}, AccOpts)     -> AccOpts#ssl_options{cacertfile = CaCertFile};
+                     ({dhfile, DHFile}, AccOpts)             -> AccOpts#ssl_options{dhfile = DHFile};
+                     ({ciphers, Ciphers}, AccOpts)           -> AccOpts#ssl_options{ciphers = Ciphers};
+                     ({reuse_sessions, Reuse}, AccOpts)      -> AccOpts#ssl_options{reuse_sessions = Reuse};
+                     ({reuse_session, ReuseFun}, AccOpts)    -> AccOpts#ssl_options{reuse_session = ReuseFun};
+                     ({Opt, Value}, _)                       -> throw({error, {eoptions, {Opt, Value}}})
+                  end,
+                  SslOpts, HostConf),
+            %% Remove sni_hosts options
+            {Hostname, NewOpts#ssl_options{sni_hosts = undefined}}
+    end.
