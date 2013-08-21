@@ -337,7 +337,17 @@
 -define(EXPLICIT_CHAR2, 2).
 -define(NAMED_CURVE, 3).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Server name indication RFC 6066 section 3
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-define(SNI_EXT, 16#0000).
+
+%% enum { host_name(0), (255) } NameType;
+-define(SNI_NAMETYPE_HOST_NAME, 0).
+
+-record(sni, {
+          hostname = undefined
+        }).
+
 -endif. % -ifdef(ssl_handshake).
-
-
-     

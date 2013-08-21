@@ -40,7 +40,7 @@
 	 encode_handshake/2, init_handshake_history/0, update_handshake_history/2,
 	 decrypt_premaster_secret/2, prf/5, next_protocol/1]).
 
--export([dec_hello_extensions/2]).
+-export([dec_hello_extensions/2, enc_hello_extensions/1]). %% Exported only for tests purposes ...
 
 -type tls_handshake() :: #client_hello{} | #server_hello{} |
 			 #server_hello_done{} | #certificate{} | #certificate_request{} |
@@ -73,6 +73,13 @@ client_hello(Host, Port, ConnectionStates,
 
     Id = ssl_session:client_id({Host, Port, SslOpts}, Cache, CacheCb, OwnCert),
 
+    %% RFC 6066, Section3: Currently, the only server names supported are
+    %% DNS hostnames
+    SniHost = case inet_parse:domain(Host) of
+                  false -> undefined;
+                  true -> #sni{hostname = Host}
+              end,
+
     #client_hello{session_id = Id,
 		  client_version = Version,
 		  cipher_suites = cipher_suites(Ciphers, Renegotiation),
@@ -86,7 +93,8 @@ client_hello(Host, Port, ConnectionStates,
 		  ec_point_formats = EcPointFormats,
 		  elliptic_curves = EllipticCurves,
 		  next_protocol_negotiation =
-		      encode_client_protocol_negotiation(SslOpts#ssl_options.next_protocol_selector, Renegotiation)
+		      encode_client_protocol_negotiation(SslOpts#ssl_options.next_protocol_selector, Renegotiation),
+		  sni = SniHost
 		 }.
 
 encode_protocol(Protocol, Acc) ->
@@ -1363,7 +1371,8 @@ enc_hs(#client_hello{client_version = {Major, Minor},
 		     hash_signs = HashSigns,
 		     ec_point_formats = EcPointFormats,
 		     elliptic_curves = EllipticCurves,
-		     next_protocol_negotiation = NextProtocolNegotiation}, _Version) ->
+		     next_protocol_negotiation = NextProtocolNegotiation,
+		     sni = SNI}, _Version) ->
     SIDLength = byte_size(SessionID),
     BinCompMethods = list_to_binary(CompMethods),
     CmLength = byte_size(BinCompMethods),
@@ -1371,7 +1380,8 @@ enc_hs(#client_hello{client_version = {Major, Minor},
     CsLength = byte_size(BinCipherSuites),
     Extensions0 = hello_extensions(RenegotiationInfo, SRP, NextProtocolNegotiation)
 	++ ec_hello_extensions(lists:map(fun ssl_cipher:suite_definition/1, CipherSuites), EcPointFormats)
-	++ ec_hello_extensions(lists:map(fun ssl_cipher:suite_definition/1, CipherSuites), EllipticCurves),
+	++ ec_hello_extensions(lists:map(fun ssl_cipher:suite_definition/1, CipherSuites), EllipticCurves)
+	++ hello_extensions(SNI),
     Extensions1 = if
 		      Major == 3, Minor >=3 -> Extensions0 ++ hello_extensions(HashSigns);
 		      true -> Extensions0
@@ -1572,6 +1582,10 @@ hello_extensions(#srp{} = Info) ->
     [Info];
 hello_extensions(#hash_sign_algos{} = Info) ->
     [Info];
+hello_extensions(#sni{hostname = undefined}) ->
+    [];
+hello_extensions(#sni{} = Info) ->
+    [Info];
 hello_extensions(undefined) ->
     [].
 
@@ -1621,7 +1635,19 @@ enc_hello_extensions([#hash_sign_algos{hash_sign_algos = HashSignAlgos} | Rest],
     ListLen = byte_size(SignAlgoList),
     Len = ListLen + 2,
     enc_hello_extensions(Rest, <<?UINT16(?SIGNATURE_ALGORITHMS_EXT), 
-				 ?UINT16(Len), ?UINT16(ListLen), SignAlgoList/binary, Acc/binary>>).
+				 ?UINT16(Len), ?UINT16(ListLen), SignAlgoList/binary, Acc/binary>>);
+enc_hello_extensions([#sni{hostname = Hostname} | Rest], Acc) ->
+    HostLen = length(Hostname),
+    HostnameBin = list_to_binary(Hostname),
+    % Hostname type (1 byte) + Hostname length (2 bytes) + Hostname (HostLen bytes)
+    ServerNameLength = 1 + 2 + HostLen,
+    % ServerNameListSize (2 bytes) + ServerNameLength
+    ExtLength = 2 + ServerNameLength,
+    enc_hello_extensions(Rest, <<?UINT16(?SNI_EXT), ?UINT16(ExtLength),
+        ?UINT16(ServerNameLength),
+        ?BYTE(?SNI_NAMETYPE_HOST_NAME),
+        ?UINT16(HostLen), HostnameBin/binary,
+        Acc/binary>>).
 
 encode_client_protocol_negotiation(undefined, _) ->
     undefined;

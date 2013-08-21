@@ -39,7 +39,8 @@
 	  next_protocol_negotiation = undefined, % [binary()]
 	  srp,
 	  ec_point_formats,
-	  elliptic_curves
+	  elliptic_curves,
+	  sni
 	 }).
 
 -endif. % -ifdef(tls_handshake).
