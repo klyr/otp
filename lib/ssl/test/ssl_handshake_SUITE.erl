@@ -36,6 +36,7 @@ all() -> [
 	decode_hello_handshake,
 	decode_single_hello_extension_correctly,
 	encode_single_hello_sni_extension_correctly,
+	decode_single_hello_sni_extension_correctly,
 	decode_unknown_hello_extension_correctly].
 
 %%--------------------------------------------------------------------
@@ -74,6 +75,16 @@ encode_single_hello_sni_extension_correctly(_Config) ->
     HelloExt = <<ExtSize:16/unsigned-big-integer, SNI/binary>>,
     Encoded = tls_handshake:enc_hello_extensions(Exts),
     HelloExt = Encoded.
+
+decode_single_hello_sni_extension_correctly(_Config) ->
+    SNI1 = <<16#00, 16#00, 16#00, 16#0d, 16#00, 16#0b, 16#00, 16#00, 16#08,
+             $t,    $e,    $s,    $t,    $.,    $c,    $o,    $m>>,
+    SNI2 = <<16#00, 16#00, 16#00, 16#0e, 16#00, 16#0c, 16#00, 16#00, 16#09,
+             $1,    $2,    $7,    $.,    $0,    $.,    $0,    $.,    $1>>,
+    Extensions1 = tls_handshake:dec_hello_extensions(SNI1, []),
+    Extensions2 = tls_handshake:dec_hello_extensions(SNI2, []),
+    [{sni, #sni{hostname = "test.com"}}] = Extensions1,
+    [] = Extensions2.
 
 decode_unknown_hello_extension_correctly(_Config) ->
 	FourByteUnknown = <<16#CA,16#FE, ?UINT16(4), 3, 0, 1, 2>>,

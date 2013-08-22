@@ -1319,6 +1319,17 @@ dec_hello_extensions(<<?UINT16(?EC_POINT_FORMATS_EXT), ?UINT16(Len),
     dec_hello_extensions(Rest, [{ec_point_formats,
 				 #ec_point_formats{ec_point_format_list = ECPointFormats}} | Acc]);
 
+dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(_ExtLength),
+                       ?UINT16(_ServerNameLength), ?BYTE(_NameType),
+                       ?UINT16(HostLen), Hostname:HostLen/binary, Rest/binary>>,
+                     Acc) ->
+    TextHostname = binary_to_list(Hostname),
+    case inet_parse:domain(TextHostname) of
+        true -> dec_hello_extensions(Rest,
+                    [{sni, #sni{hostname = TextHostname}} | Acc]);
+        false -> dec_hello_extensions(Rest, Acc)
+    end;
+
 %% Ignore data following the ClientHello (i.e.,
 %% extensions) if not understood.
 
