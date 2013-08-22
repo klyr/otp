@@ -41,7 +41,8 @@
 -export([send/2, recv/3, connect/7, ssl_accept/6, handshake/2,
 	 socket_control/3, close/1, shutdown/2,
 	 new_user/2, get_opts/2, set_opts/2, info/1, session_info/1, 
-	 peer_certificate/1, renegotiation/1, negotiated_next_protocol/1, prf/5]).
+	 peer_certificate/1, renegotiation/1, negotiated_next_protocol/1, prf/5,
+	 sni_hostname/1]).
 
 %% Called by ssl_connection_sup
 -export([start_link/7]). 
@@ -156,7 +157,7 @@ connect(Host, Port, Socket, Options, User, CbInfo, Timeout) ->
 %%              ssl handshake. 
 %%--------------------------------------------------------------------
 ssl_accept(Port, Socket, Opts, User, CbInfo, Timeout) ->
-    try start_fsm(server, "localhost", Port, Socket, Opts, User, 
+    try start_fsm(server, undefined, Port, Socket, Opts, User,
 		  CbInfo, Timeout)
     catch
 	exit:{noproc, _} ->
@@ -283,6 +284,15 @@ renegotiation(ConnectionPid) ->
 %%--------------------------------------------------------------------
 prf(ConnectionPid, Secret, Label, Seed, WantedLength) ->
     sync_send_all_state_event(ConnectionPid, {prf, Secret, Label, Seed, WantedLength}).
+
+%%--------------------------------------------------------------------
+-spec sni_hostname(pid()) -> {ok, host()} | undefined.
+
+%%
+%% Description: Returns the selected server name choosen by the server, or
+%% returns undefined if the default configuration was choosen
+sni_hostname(ConnectionPid) ->
+    sync_send_all_state_event(ConnectionPid, sni_hostname).
 
 %%====================================================================
 %% ssl_connection_sup API
@@ -1065,7 +1075,10 @@ handle_sync_event(session_info, _, StateName,
 handle_sync_event(peer_certificate, _, StateName, 
 		  #state{session = #session{peer_certificate = Cert}} 
 		  = State) ->
-    {reply, {ok, Cert}, StateName, State, get_timeout(State)}.
+    {reply, {ok, Cert}, StateName, State, get_timeout(State)};
+
+handle_sync_event(sni_hostname, _, StateName, #state{host = Host} = State) ->
+    {reply, Host, StateName, State, get_timeout(State)}.
 
 %%--------------------------------------------------------------------
 %% Description: This function is called by a gen_fsm when it receives any

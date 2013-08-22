@@ -31,7 +31,8 @@
 	 controlling_process/2, listen/2, peername/1, peercert/1,
 	 recv/2, recv/3, send/2, getopts/2, setopts/2, sockname/1,
 	 versions/0, session_info/1, format_error/1,
-	 renegotiate/1, prf/5, clear_pem_cache/0, random_bytes/1, negotiated_next_protocol/1]).
+	 renegotiate/1, prf/5, clear_pem_cache/0, random_bytes/1, negotiated_next_protocol/1,
+	 sni_hostname/1]).
 
 -include("ssl_internal.hrl").
 -include("ssl_record.hrl").
@@ -158,6 +159,9 @@ suite_definition(S) ->
 
 negotiated_next_protocol(#sslsocket{pid = Pid}) ->
     tls_connection:negotiated_next_protocol(Pid).
+
+sni_hostname(#sslsocket{pid = Pid}) ->
+    tls_connection:sni_hostname(Pid).
 
 %%%--------------------------------------------------------------------
 -spec cipher_suites() -> [erl_cipher_suite()].
