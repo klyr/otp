@@ -207,7 +207,7 @@ transport_accept(#sslsocket{pid = {ListenSocket, #config{cb = CbInfo, ssl = SslO
 	{ok, Socket} ->
 	    ok = ssl_socket:setopts(Transport, ListenSocket, SocketValues),
 	    {ok, Port} = ssl_socket:port(Transport, Socket),
-	    ConnArgs = [server, "localhost", Port, Socket,
+	    ConnArgs = [server, undefined, Port, Socket,
 			{SslOpts, socket_options(SocketValues)}, self(), CbInfo],
 	    case ssl_connection_sup:start_child(ConnArgs) of
 		{ok, Pid} ->

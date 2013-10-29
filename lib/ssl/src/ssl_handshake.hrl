@@ -106,7 +106,8 @@
 	  hash_signs,          % supported combinations of hashes/signature algos
 	  ec_point_formats,    % supported ec point formats
 	  elliptic_curves,     % supported elliptic curver
-	  next_protocol_negotiation = undefined % [binary()]
+	  next_protocol_negotiation = undefined, % [binary()]
+	  sni = undefined      % Server name indication extension
 	 }).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

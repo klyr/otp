@@ -1106,6 +1106,7 @@ dec_hs(_Version, ?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
     EllipticCurves = proplists:get_value(elliptic_curves, HelloExtensions,
 					   undefined),
     NextProtocolNegotiation = proplists:get_value(next_protocol_negotiation, HelloExtensions, undefined),
+    Sni = proplists:get_value(sni, HelloExtensions, undefined),
 
     #server_hello{
 	server_version = {Major,Minor},
@@ -1116,7 +1117,8 @@ dec_hs(_Version, ?SERVER_HELLO, <<?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 	renegotiation_info = RenegotiationInfo,
 	hash_signs = HashSigns,
 	elliptic_curves = EllipticCurves,
-       next_protocol_negotiation = NextProtocolNegotiation};
+	next_protocol_negotiation = NextProtocolNegotiation,
+	sni = Sni};
 dec_hs(_Version, ?CERTIFICATE, <<?UINT24(ACLen), ASN1Certs:ACLen/binary>>) ->
     #certificate{asn1_certificates = certs_to_list(ASN1Certs)};
 dec_hs(_Version, ?SERVER_KEY_EXCHANGE, Keys) ->
