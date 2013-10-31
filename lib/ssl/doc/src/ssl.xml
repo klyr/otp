@@ -52,8 +52,8 @@
       <item>CRL and policy certificate extensions are not supported
       yet. However CRL verification is supported by public_key, only not integrated
       in ssl yet. </item>
-      <item>Support for 'Server Name Indication' extension client side
-      (RFC 6066 section 3).</item>
+      <item>Support for 'Server Name Indication' extension
+            (RFC 6066 section 3).</item>
     </list>
  
   </section>
@@ -89,7 +89,8 @@
       {ssl_imp, ssl_imp()} | {reuse_sessions, boolean()} | {reuse_session, fun()}
       {next_protocols_advertised, [binary()]} |
       {client_preferred_next_protocols, {client | server, [binary()]} | {client | server, [binary()], binary()}} |
-      {log_alert, boolean()} | {server_name_indication, hostname() | disable}
+      {log_alert, boolean()} | {server_name_indication, hostname() | disable} |
+      {virtual_hosts, [{hostname(), [ssloption()]}]}
     </c></p>
 
     <p><c>transportoption() = {cb_info, {CallbackModule::atom(), DataTag::atom(), ClosedTag::atom(), ErrTag:atom()}}
@@ -473,6 +474,35 @@ fun(srp, Username :: string(), UserState :: term()) ->
       <tag>{honor_cipher_order, boolean()}</tag>
       <item>If true, use the server's preference for cipher selection. If false
       (the default), use the client's preference.
+
+      <tag>{virtual_hosts, [{hostname(), [ssloption()]}]}</tag>
+      <item>Enable Server Name Indication server support. Allows the server to
+      use different SSL parameters based on SNI servername specified by
+      client. For example a server can present multiple certificates on the same
+      ip address and port number. This is a kind of virtualhost for SSL
+      connections. Use the <c>ssl:sni_hostname/1</c> function to get the
+      selected host. Overridable options are <c>verify</c>, <c>verify_fun</c>,
+      <c>fail_if_no_peer_cert</c>, <c>depth</c>, <c>cert</c>, <c>certfile</c>,
+      <c>key</c>, <c>keyfile</c>, <c>password</c>, <c>cacerts</c>,
+      <c>cacertfile</c>, <c>dhfile</c>, <c>ciphers</c>, <c>reuse_sessions</c>,
+      <c>reuse_session</c>.
+
+      Usage example:
+      <code>
+        {ok, ListenSocket} = ssl:listen(Port, [
+                              {certfile, "default.crt"},
+                              {keyfile, "default.key"},
+                              {verify, verify_none},
+                              {sni_hosts,
+                                  [{"vhost1.example.com",
+                                       [{certfile, "vhost1.example.com.crt"},
+                                        {keyfile, "vhost1.example.com.key"}]},
+                                   {"vhost2.example.org",
+                                       [{verify, verify_peer}]}]}]),
+        {ok, TS} = ssl:transport_accept(ListenSocket),
+        S = ssl:ssl_accept(TS),
+        SelectedHost = ssl:sni_hostname(S).
+      </code>
       </item>
     </taglist>
   </section>
