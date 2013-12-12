@@ -644,6 +644,7 @@ handle_options(Opts0, _Role) ->
 			  handle_option(client_preferred_next_protocols, Opts, undefined)),
 		    log_alert = handle_option(log_alert, Opts, true),
 		    server_name_indication = handle_option(server_name_indication, Opts, undefined),
+		    virtual_hosts = VirtualHosts,
 		    honor_cipher_order = handle_option(honor_cipher_order, Opts, false)
 		   },
 
@@ -657,7 +658,7 @@ handle_options(Opts0, _Role) ->
 		  cb_info, renegotiate_at, secure_renegotiate, hibernate_after,
 		  erl_dist, next_protocols_advertised,
 		  client_preferred_next_protocols, log_alert,
-		  server_name_indication, honor_cipher_order],
+		  server_name_indication, virtual_hosts, honor_cipher_order],
 
     SockOpts = lists:foldl(fun(Key, PropList) ->
 				   proplists:delete(Key, PropList)
@@ -837,14 +838,21 @@ validate_option(virtual_hosts, Value) when is_list(Value) ->
     ValidOptions = [verify, verify_fun, fail_if_no_peer_cert, depth, cert,
                     certfile, key, keyfile, password, cacerts, cacertfile,
                     dhfile, ciphers, reuse_sessions, reuse_session],
-    Filter = fun({K, V}) when is_string(K), is_tuple(V) ->
-                     lists:member(element(1, V), ValidOptions);
-                (_) ->
-                     false
-             end,
-    lists:filter(Validate, Value)
-    throw({error, {options, {not_valid_in_virtual_host_context,
-                             {Hostname, Option}}}}),
+    Validate = fun({Hostname, Options}) when is_list(Hostname), is_list(Options) ->
+                       lists:foreach(
+                         fun({OptK, OptV}) ->
+                                 case lists:member(OptK, ValidOptions) of
+                                     true -> validate_option(OptK, OptV), ok;
+                                     false -> throw({error, {options, {not_a_valid_virtual_hosts_option_for_hostname, {Hostname, OptK}}}})
+                                 end;
+                            (Opt) ->
+                                 throw({error, {options, {not_a_valid_virtual_hosts_option_for_hostname, {Hostname, Opt}}}})
+                         end,
+                         Options);
+                  (_) ->
+                       throw({error, {options, {bad_virtual_hosts_options}}})
+               end,
+    lists:foreach(Validate, Value),
     Value;
 validate_option(Opt, Value) ->
     throw({error, {options, {Opt, Value}}}).

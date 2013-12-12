@@ -46,6 +46,7 @@ MODULES = \
 	ssl_packet_SUITE \
 	ssl_payload_SUITE \
 	ssl_session_cache_SUITE	\
+	ssl_sni_SUITE \
 	ssl_to_openssl_SUITE \
 	ssl_ECC_SUITE \
 	make_certs\

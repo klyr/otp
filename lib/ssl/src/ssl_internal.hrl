@@ -114,6 +114,7 @@
 	  next_protocol_selector = undefined,  %% fun([binary()]) -> binary())
 	  log_alert             :: boolean(),
 	  server_name_indication = undefined,
+	  virtual_hosts = undefined,
 	  %% Should the server prefer its own cipher order over the one provided by
 	  %% the client?
 	  honor_cipher_order = false
