@@ -608,6 +608,8 @@ handle_options(Opts0, _Role) ->
 		       [tls_record:protocol_version(Vsn) || Vsn <- Vsns]
 	       end,
 
+    VirtualHosts = handle_option(virtual_hosts, Opts, []),
+
     SSLOptions = #ssl_options{
 		    versions   = Versions,
 		    verify     = validate_option(verify, Verify),
@@ -830,6 +832,19 @@ validate_option(server_name_indication, disable) ->
 validate_option(server_name_indication, undefined) ->
     undefined;
 validate_option(honor_cipher_order, Value) when is_boolean(Value) ->
+    Value;
+validate_option(virtual_hosts, Value) when is_list(Value) ->
+    ValidOptions = [verify, verify_fun, fail_if_no_peer_cert, depth, cert,
+                    certfile, key, keyfile, password, cacerts, cacertfile,
+                    dhfile, ciphers, reuse_sessions, reuse_session],
+    Filter = fun({K, V}) when is_string(K), is_tuple(V) ->
+                     lists:member(element(1, V), ValidOptions);
+                (_) ->
+                     false
+             end,
+    lists:filter(Validate, Value)
+    throw({error, {options, {not_valid_in_virtual_host_context,
+                             {Hostname, Option}}}}),
     Value;
 validate_option(Opt, Value) ->
     throw({error, {options, {Opt, Value}}}).
