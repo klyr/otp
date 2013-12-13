@@ -833,7 +833,21 @@ fun(srp, Username :: string(), UserState :: term()) ->
 	or may not succeed depending on timing.</p></warning>
       </desc>
     </func>
-    
+
+    <func>
+      <name>hostname(Socket) -> undefined | hostname()</name>
+      <fsummary>Returns the hostname selected by the server if SNI extension was
+      used. Else return undefined, meaning that the default configuration has
+      been choosen</fsummary>
+      <type>
+        <v>Socket = sslsocket()</v>
+      </type>
+      <desc>
+        <p>Use this function when the SSL handshake is finished to know what was
+        the requested SNI hostname.</p>
+      </desc>
+    </func>
+
     <func>
       <name>sockname(Socket) -> {ok, {Address, Port}} |
 	{error, Reason}</name>

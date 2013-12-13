@@ -38,7 +38,8 @@
 %% SSL/TLS protocol handling
 -export([cipher_suites/0, cipher_suites/1, suite_definition/1,
 	 connection_info/1, versions/0, session_info/1, format_error/1,
-	 renegotiate/1, prf/5, negotiated_next_protocol/1]).
+	 renegotiate/1, prf/5, negotiated_next_protocol/1,
+	 hostname/1]).
 %% Misc
 -export([random_bytes/1]).
 
@@ -328,6 +329,15 @@ suite_definition(S) ->
 %%--------------------------------------------------------------------
 negotiated_next_protocol(#sslsocket{pid = Pid}) ->
     ssl_connection:negotiated_next_protocol(Pid).
+
+%%--------------------------------------------------------------------
+-spec hostname(#sslsocket{}) -> string() | undefined.
+%%
+%% Description: Returns the selected server name choosen by the server, or
+%% returns undefined if the default configuration was choosen
+%%--------------------------------------------------------------------
+hostname(#sslsocket{pid = Pid}) when is_pid(Pid) ->
+    ssl_connection:hostname(Pid).
 
 %%--------------------------------------------------------------------
 -spec cipher_suites() -> [erl_cipher_suite()].

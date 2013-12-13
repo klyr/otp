@@ -31,13 +31,21 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 all() -> [bad_virtual_hosts,
           bad_virtual_hosts_hostname,
           bad_virtual_hosts_option,
-          good_virtual_hosts_option].
+          good_virtual_hosts_option,
+          server_selected_hostname_default].
 
-init_per_suite(Config) ->
+init_per_suite(Config0) ->
     catch crypto:stop(),
     try crypto:start() of
         ok ->
             ssl:start(),
+            Result =
+                (catch make_certs:all(?config(data_dir, Config0),
+                                      ?config(priv_dir, Config0))),
+            ct:log("Make certs  ~p~n", [Result]),
+
+            Config1 = ssl_test_lib:make_dsa_cert(Config0),
+            Config = ssl_test_lib:cert_options(Config1),
             Config
     catch _:_ ->
             {skip, "Crypto did not start"}
@@ -61,4 +69,31 @@ bad_virtual_hosts_option(_Config) ->
 
 good_virtual_hosts_option(_Config) ->
     Option = {virtual_hosts, [{"host1", [{verify, verify_none}]}]},
-    {ok, S} = (catch ssl:listen(9443, [Option])).
+    {ok, _S} = (catch ssl:listen(9443, [Option])).
+
+server_selected_hostname_default() ->
+    [{doc, "Check that a server select default server (undefined) when SNI "
+      "hostname is not recognized"}].
+server_selected_hostname_default(Config) when is_list(Config) ->
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {?MODULE, sni_hostname_result, []}},
+                                        {options, ServerOpts}]),
+
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+                                        {host, Hostname},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ClientOpts}]),
+    SelectedSNI = undefined,
+    ssl_test_lib:check_result(Server, SelectedSNI),
+
+    ssl_test_lib:close(Client),
+    ssl_test_lib:close(Server).
+
+sni_hostname_result(Socket) ->
+    ssl:hostname(Socket).

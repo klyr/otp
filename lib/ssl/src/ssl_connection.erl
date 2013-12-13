@@ -42,7 +42,8 @@
 %% User Events 
 -export([send/2, recv/3, close/1, shutdown/2,
 	 new_user/2, get_opts/2, set_opts/2, info/1, session_info/1, 
-	 peer_certificate/1, renegotiation/1, negotiated_next_protocol/1, prf/5	
+	 peer_certificate/1, renegotiation/1, negotiated_next_protocol/1, prf/5,
+	 hostname/1
 	]).
 
 -export([handle_session/6]).
@@ -170,6 +171,15 @@ new_user(ConnectionPid, User) ->
 %%--------------------------------------------------------------------
 negotiated_next_protocol(ConnectionPid) ->
     sync_send_all_state_event(ConnectionPid, negotiated_next_protocol).
+
+%%--------------------------------------------------------------------
+-spec hostname(pid()) -> {ok, binary()} | {error, reason()}.
+%%
+%% Description:  Returns the selected server name choosen by the server, or
+%% returns undefined if the default configuration was choosen
+%%--------------------------------------------------------------------
+hostname(ConnectionPid) ->
+    sync_send_all_state_event(ConnectionPid, hostname).
 
 %%--------------------------------------------------------------------
 -spec get_opts(pid(), list()) -> {ok, list()} | {error, reason()}.    
@@ -710,6 +720,9 @@ handle_sync_event(negotiated_next_protocol, _From, StateName, #state{next_protoc
     {reply, {error, next_protocol_not_negotiated}, StateName, State, get_timeout(State)};
 handle_sync_event(negotiated_next_protocol, _From, StateName, #state{next_protocol = NextProtocol} = State) ->
     {reply, {ok, NextProtocol}, StateName, State, get_timeout(State)};
+
+handle_sync_event(hostname, _, StateName, #state{host = Host} = State) ->
+    {reply, Host, StateName, State, get_timeout(State)};
 
 handle_sync_event({set_opts, Opts0}, _From, StateName0, 
 		  #state{socket_options = Opts1, 
