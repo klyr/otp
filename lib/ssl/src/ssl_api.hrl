@@ -51,7 +51,8 @@
                         {ciphers, ciphers()} | {ssl_imp, ssl_imp()} | {reuse_sessions, boolean()} |
                         {reuse_session, fun()} | {hibernate_after, integer()|undefined} |
                         {next_protocols_advertised, list(binary())} |
-                        {client_preferred_next_protocols, binary(), client | server, list(binary())}.
+                        {client_preferred_next_protocols, binary(), client | server, list(binary())} |
+                        {virtual_hosts, [{string(), [ssl_option()]}]}.
 
 -type verify_type()  :: verify_none | verify_peer.
 -type path()         :: string().
