@@ -290,9 +290,12 @@ hello({common_client_hello, Type, ServerHelloExt, HashSign},
 	     negotiated_version = Version} = State, Connection) ->
     {KeyAlg, _, _, _} = ssl_cipher:suite_definition(CipherSuite),
     NegotiatedHashSign = negotiated_hashsign(HashSign, KeyAlg, Version),
+    SNIHost = case ServerHelloExt#hello_extensions.sni of
+        undefined -> undefined;
+        SNIExt -> SNIExt#sni.hostname
+    end,
     do_server_hello(Type, ServerHelloExt,
-		    State#state{hashsign_algorithm = NegotiatedHashSign}, Connection);
-
+		    State#state{host = SNIHost, hashsign_algorithm = NegotiatedHashSign}, Connection);
 hello(timeout, State, _) ->
     {next_state, hello, State, hibernate};
 

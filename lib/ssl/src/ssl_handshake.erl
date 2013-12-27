@@ -1092,7 +1092,8 @@ handle_client_hello_extensions(RecordCB, Random, ClientCipherSuites,
 			       #hello_extensions{renegotiation_info = Info,
 						 srp = SRP,
 						 ec_point_formats = ECCFormat,
-						 next_protocol_negotiation = NextProtocolNegotiation}, Version,
+						 next_protocol_negotiation = NextProtocolNegotiation,
+						 sni = SNIOption}, Version,
 			       #ssl_options{secure_renegotiate = SecureRenegotation} = Opts,
 			       #session{cipher_suite = NegotiatedCipherSuite,
 					compression_method = Compression} = Session0,
@@ -1103,13 +1104,14 @@ handle_client_hello_extensions(RecordCB, Random, ClientCipherSuites,
 						      ClientCipherSuites, Compression,
 						      ConnectionStates0, Renegotiation, SecureRenegotation),
     ProtocolsToAdvertise = handle_next_protocol_extension(NextProtocolNegotiation, Renegotiation, Opts),
-   
+    ServerSNIExt = handle_server_name_indication_extension(SNIOption),
     ServerHelloExtensions =  #hello_extensions{
 				renegotiation_info = renegotiation_info(RecordCB, server,
 									ConnectionStates, Renegotiation),
 				ec_point_formats = server_ecc_extension(Version, ECCFormat),
 				next_protocol_negotiation =
-				    encode_protocols_advertised_on_server(ProtocolsToAdvertise)
+				    encode_protocols_advertised_on_server(ProtocolsToAdvertise),
+				sni = ServerSNIExt
 			       },
     {Session, ConnectionStates, ServerHelloExtensions}.
 
@@ -1804,6 +1806,10 @@ handle_srp_extension(undefined, Session) ->
 handle_srp_extension(#srp{username = Username}, Session) ->
     Session#session{srp_username = Username}.
 
+handle_server_name_indication_extension(undefined) ->
+    undefined;
+handle_server_name_indication_extension(SNIOption) ->
+    SNIOption.
 %%-------------Misc --------------------------------
 
 select_cipher_suite(CipherSuites, Suites, false) ->

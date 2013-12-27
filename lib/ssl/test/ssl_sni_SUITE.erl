@@ -23,6 +23,7 @@
 -compile(export_all).
 -include_lib("common_test/include/ct.hrl").
 
+-define(LONG_TIMEOUT, 600000).
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
 %%--------------------------------------------------------------------
@@ -32,9 +33,11 @@ all() -> [bad_virtual_hosts,
           bad_virtual_hosts_hostname,
           bad_virtual_hosts_option,
           good_virtual_hosts_option,
-          server_selected_hostname_default].
+          server_selected_hostname_default,
+          server_selected_hostname].
 
 init_per_suite(Config0) ->
+    Dog = ct:timetrap(?LONG_TIMEOUT * 2),
     catch crypto:stop(),
     try crypto:start() of
         ok ->
@@ -46,7 +49,7 @@ init_per_suite(Config0) ->
 
             Config1 = ssl_test_lib:make_dsa_cert(Config0),
             Config = ssl_test_lib:cert_options(Config1),
-            Config
+            [{watchdog, Dog} | Config]
     catch _:_ ->
             {skip, "Crypto did not start"}
     end.
@@ -89,11 +92,38 @@ server_selected_hostname_default(Config) when is_list(Config) ->
                                         {from, self()},
                                         {mfa, {ssl_test_lib, no_result, []}},
                                         {options, ClientOpts}]),
-    SelectedSNI = undefined,
+    ct:log("Testcase ~p, Client ~p  Server ~p ~n",
+           [self(), Client, Server]),
+    SelectedSNI = Hostname,
     ssl_test_lib:check_result(Server, SelectedSNI),
 
-    ssl_test_lib:close(Client),
-    ssl_test_lib:close(Server).
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+
+server_selected_hostname(Config) when is_list(Config) ->
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    SNIHostname = "sni.example.com",
+    Vhosts = {virtual_hosts, [{Hostname, []}]},
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {?MODULE, sni_hostname_result, []}},
+                                        {options, ServerOpts ++ [Vhosts]}]),
+
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+                                        {host, Hostname},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ClientOpts ++ [{server_name_indication, SNIHostname}]}]),
+    ct:log("Testcase ~p, Client ~p  Server ~p ~n",
+           [self(), Client, Server]),
+    ssl_test_lib:check_result(Server, SNIHostname),
+
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
 
 sni_hostname_result(Socket) ->
     ssl:hostname(Socket).
