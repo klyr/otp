@@ -81,7 +81,7 @@ connect(Connection, Host, Port, Socket, Options, User, CbInfo, Timeout) ->
 %%              ssl handshake. 
 %%--------------------------------------------------------------------
 ssl_accept(Connection, Port, Socket, Opts, User, CbInfo, Timeout) ->
-    try Connection:start_fsm(server, "localhost", Port, Socket, Opts, User, 
+    try Connection:start_fsm(server, undefined, Port, Socket, Opts, User, 
 		  CbInfo, Timeout)
     catch
 	exit:{noproc, _} ->
