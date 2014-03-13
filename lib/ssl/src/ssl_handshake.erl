@@ -1667,10 +1667,12 @@ dec_hello_extensions(<<?UINT16(?EC_POINT_FORMATS_EXT), ?UINT16(Len),
     dec_hello_extensions(Rest, Acc#hello_extensions{ec_point_formats =
 							#ec_point_formats{ec_point_format_list =
 									      ECPointFormats}});
-dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(_ExtLength),
-                       ?UINT16(_ServerNameLength), ?BYTE(_NameType),
-                       ?UINT16(HostLen), Hostname:HostLen/binary, Rest/binary>>,
-                     Acc) ->
+%% If multiple server names are sent, take the first one with DNS hostname type
+dec_hello_extensions(<<?UINT16(?SNI_EXT), ?UINT16(Len),
+                       ?UINT16(SrvNameListSize),
+                        ServerList:SrvNameListSize/binary, Rest/binary>>,
+                     Acc) when Len == SrvNameListSize + 2 ->
+    Hostname = get_first_dns_hostname(ServerList),
     TextHostname = binary_to_list(Hostname),
     case inet_parse:domain(TextHostname) of
         true -> dec_hello_extensions(Rest, Acc#hello_extensions{
@@ -1685,6 +1687,13 @@ dec_hello_extensions(<<?UINT16(_), ?UINT16(Len), _Unknown:Len/binary, Rest/binar
 %% This theoretically should not happen if the protocol is followed, but if it does it is ignored.
 dec_hello_extensions(_, Acc) ->
     Acc.
+
+get_first_dns_hostname(<<?BYTE(?SNI_NAMETYPE_HOST_NAME), ?UINT16(HostLen),
+                          Hostname:HostLen/binary, _Rest/binary>>) ->
+    Hostname;
+get_first_dns_hostname(<<?BYTE(_), ?UINT16(HostLen),
+                          _:HostLen/binary, Rest/binary>>) ->
+    get_first_dns_hostname(Rest).
 
 dec_hashsign(<<?BYTE(HashAlgo), ?BYTE(SignAlgo)>>) ->
     {ssl_cipher:hash_algorithm(HashAlgo), ssl_cipher:sign_algorithm(SignAlgo)}.
