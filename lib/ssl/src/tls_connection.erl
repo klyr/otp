@@ -144,29 +144,17 @@ send_change_cipher(Msg, #state{connection_states = ConnectionStates0,
 start_link(Role, Host, Port, Socket, Options, User, CbInfo) ->
     {ok, proc_lib:spawn_link(?MODULE, init, [[Role, Host, Port, Socket, Options, User, CbInfo]])}.
 
-init([Role, Host, Port, Socket, {SSLOpts0, _} = Options,  User, CbInfo]) ->
+init([Role, Host, Port, Socket, Options,  User, CbInfo]) ->
     process_flag(trap_exit, true),
     State0 = initial_state(Role, Host, Port, Socket, Options, User, CbInfo),
     Handshake = ssl_handshake:init_handshake_history(),
     TimeStamp = calendar:datetime_to_gregorian_seconds({date(), time()}),
-    try ssl_config:init(SSLOpts0, Role) of
-	{ok, Ref, CertDbHandle, FileRefHandle, CacheHandle, OwnCert, Key, DHParams} ->
-	    Session = State0#state.session,
-	    State = State0#state{
-				 tls_handshake_history = Handshake,
-				 session = Session#session{own_certificate = OwnCert,
-							   time_stamp = TimeStamp},
-				 file_ref_db = FileRefHandle,
-				 cert_db_ref = Ref,
-				 cert_db = CertDbHandle,
-				 session_cache = CacheHandle,
-				 private_key = Key,
-				 diffie_hellman_params = DHParams},
-	    gen_fsm:enter_loop(?MODULE, [], hello, State, get_timeout(State))
-    catch
-	throw:Error ->
-	    gen_fsm:enter_loop(?MODULE, [], error, {Error,State0}, get_timeout(State0))
-    end.
+    Session = State0#state.session,
+    State = State0#state{
+        tls_handshake_history = Handshake,
+        session = Session#session{time_stamp = TimeStamp}
+    },
+    gen_fsm:enter_loop(?MODULE, [], hello, State, get_timeout(State)).
 
 %%--------------------------------------------------------------------
 %% Description:There should be one instance of this function for each
@@ -201,22 +189,44 @@ hello(start, #state{host = Host, port = Port, role = client,
 hello(Hello = #client_hello{client_version = ClientVersion,
 			    extensions = #hello_extensions{hash_signs = HashSigns,
 							   ec_point_formats = EcPointFormats,
-							   elliptic_curves = EllipticCurves}},
-      State = #state{connection_states = ConnectionStates0,
-		     port = Port, session = #session{own_certificate = Cert} = Session0,
+							   elliptic_curves = EllipticCurves,
+                               sni = #sni{hostname = Hostname}}},
+      State0 = #state{connection_states = ConnectionStates0,
+		     port = Port, session = #session{} = Session0,
 		     renegotiation = {Renegotiation, _},
 		     session_cache = Cache,
 		     session_cache_cb = CacheCb,
-		     ssl_options = SslOpts}) ->
+		     ssl_options = SslOpts0}) ->
+    SslOpts = case dict:find(Hostname, SslOpts0#ssl_options.virtual_hosts) of
+        {ok, Value} -> Value;
+        error -> SslOpts0
+    end,
+    {Session, State} = try ssl_config:init(SslOpts, State0#state.role) of
+        {ok, Ref, CertDbHandle, FileRefHandle, CacheHandle, OwnCert, Key, DHParams} ->
+            Sess = Session0#session{own_certificate = OwnCert},
+            St = State0#state{
+                     session = Sess,
+                     file_ref_db = FileRefHandle,
+                     cert_db_ref = Ref,
+                     cert_db = CertDbHandle,
+                     session_cache = CacheHandle,
+                     private_key = Key,
+                     diffie_hellman_params = DHParams,
+                     ssl_options = SslOpts},
+            {Sess, St}
+        catch
+            throw:Error ->
+                {stop, Error}
+    end,
+    Cert = (State#state.session)#session.own_certificate,
     HashSign = ssl_handshake:select_hashsign(HashSigns, Cert),
-    case tls_handshake:hello(Hello, SslOpts, {Port, Session0, Cache, CacheCb,
-					      ConnectionStates0, Cert}, Renegotiation) of
-        {Version, {Type, Session},
-	 ConnectionStates, ServerHelloExt} ->
+    case tls_handshake:hello(Hello, SslOpts, {Port, Session, Cache, CacheCb,
+                          ConnectionStates0, Cert}, Renegotiation) of
+        {Version, {Type, Session1}, ConnectionStates, ServerHelloExt} ->
             ssl_connection:hello({common_client_hello, Type, ServerHelloExt, HashSign},
 				 State#state{connection_states  = ConnectionStates,
 					     negotiated_version = Version,
-					     session = Session,
+					     session = Session1,
 					     client_ecc = {EllipticCurves, EcPointFormats}}, ?MODULE);
         #alert{} = Alert ->
             handle_own_alert(Alert, ClientVersion, hello, State)
