@@ -564,99 +564,15 @@ do_connect(Address, Port,
 	    {error, {options, {socket_options, UserOpts}}}
     end.
 
-handle_options(Opts0, _Role) ->
+handle_options(Opts0, Role) ->
     Opts = proplists:expand([{binary, [{mode, binary}]},
 			     {list, [{mode, list}]}], Opts0),
-    assert_proplist(Opts),
-    ReuseSessionFun = fun(_, _, _, _) -> true end,
 
-    DefaultVerifyNoneFun =
-	{fun(_,{bad_cert, _}, UserState) ->
-		 {valid, UserState};
-	    (_,{extension, _}, UserState) ->
-		 {unknown, UserState};
-	    (_, valid, UserState) ->
-		 {valid, UserState};
-	    (_, valid_peer, UserState) ->
-		 {valid, UserState}
-	 end, []},
-
-    VerifyNoneFun = handle_option(verify_fun, Opts, DefaultVerifyNoneFun),
-
-    UserFailIfNoPeerCert = handle_option(fail_if_no_peer_cert, Opts, false),
-    UserVerifyFun = handle_option(verify_fun, Opts, undefined),
-    CaCerts = handle_option(cacerts, Opts, undefined),
-
-    {Verify, FailIfNoPeerCert, CaCertDefault, VerifyFun} =
-	%% Handle 0, 1, 2 for backwards compatibility
-	case proplists:get_value(verify, Opts, verify_none) of
-	    0 ->
-		{verify_none, false,
-		 ca_cert_default(verify_none, VerifyNoneFun, CaCerts), VerifyNoneFun};
-	    1  ->
-		{verify_peer, false,
-		 ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
-	    2 ->
-		{verify_peer, true,
-		 ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
-	    verify_none ->
-		{verify_none, false,
-		 ca_cert_default(verify_none, VerifyNoneFun, CaCerts), VerifyNoneFun};
-	    verify_peer ->
-		{verify_peer, UserFailIfNoPeerCert,
-		 ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
-	    Value ->
-		throw({error, {options, {verify, Value}}})
-	end,
-
-    CertFile = handle_option(certfile, Opts, <<>>),
-
-    Versions = case handle_option(versions, Opts, []) of
-		   [] ->
-		       tls_record:supported_protocol_versions();
-		   Vsns  ->
-		       [tls_record:protocol_version(Vsn) || Vsn <- Vsns]
-	       end,
-
+    SSLOptions0 = create_ssl_opts(Opts, Role),
     VirtualHosts = handle_option(virtual_hosts, Opts, []),
-
-    SSLOptions = #ssl_options{
-		    versions   = Versions,
-		    verify     = validate_option(verify, Verify),
-		    verify_fun = VerifyFun,
-		    fail_if_no_peer_cert = FailIfNoPeerCert,
-		    verify_client_once =  handle_option(verify_client_once, Opts, false),
-		    depth      = handle_option(depth,  Opts, 1),
-		    cert       = handle_option(cert, Opts, undefined),
-		    certfile   = CertFile,
-		    key        = handle_option(key, Opts, undefined),
-		    keyfile    = handle_option(keyfile,  Opts, CertFile),
-		    password   = handle_option(password, Opts, ""),
-		    cacerts    = CaCerts,
-		    cacertfile = handle_option(cacertfile, Opts, CaCertDefault),
-		    dh         = handle_option(dh, Opts, undefined),
-		    dhfile     = handle_option(dhfile, Opts, undefined),
-		    user_lookup_fun = handle_option(user_lookup_fun, Opts, undefined),
-		    psk_identity = handle_option(psk_identity, Opts, undefined),
-		    srp_identity = handle_option(srp_identity, Opts, undefined),
-		    ciphers    = handle_cipher_option(proplists:get_value(ciphers, Opts, []), hd(Versions)),
-		    %% Server side option
-		    reuse_session = handle_option(reuse_session, Opts, ReuseSessionFun),
-		    reuse_sessions = handle_option(reuse_sessions, Opts, true),
-		    secure_renegotiate = handle_option(secure_renegotiate, Opts, false),
-		    renegotiate_at = handle_option(renegotiate_at, Opts, ?DEFAULT_RENEGOTIATE_AT),
-		    hibernate_after = handle_option(hibernate_after, Opts, undefined),
-		    erl_dist = handle_option(erl_dist, Opts, false),
-		    next_protocols_advertised =
-			handle_option(next_protocols_advertised, Opts, undefined),
-		    next_protocol_selector =
-			make_next_protocol_selector(
-			  handle_option(client_preferred_next_protocols, Opts, undefined)),
-		    log_alert = handle_option(log_alert, Opts, true),
-		    server_name_indication = handle_option(server_name_indication, Opts, undefined),
-		    virtual_hosts = VirtualHosts,
-		    honor_cipher_order = handle_option(honor_cipher_order, Opts, false)
-		   },
+    Hosts = handle_virtual_hosts_options(Opts0, Role, VirtualHosts),
+    %%io:format("~p:~p === Vhosts: ~p~n", [?FILE, ?LINE, dict:fetch("sni.host1.example.com", Hosts)]),
+    SSLOptions = SSLOptions0#ssl_options{virtual_hosts = Hosts},
 
     CbInfo  = proplists:get_value(cb_info, Opts, {gen_tcp, tcp, tcp_closed, tcp_error}),
     SslOptions = [protocol, versions, verify, verify_fun,
@@ -680,6 +596,107 @@ handle_options(Opts0, _Role) ->
     {ok, #config{ssl = SSLOptions, emulated = Emulated, inet_ssl = SSLsock,
 		 inet_user = SockOpts, transport_info = CbInfo, connection_cb = ConnetionCb
 		}}.
+
+create_ssl_opts(Opts, _Role) ->
+    assert_proplist(Opts),
+    ReuseSessionFun = fun(_, _, _, _) -> true end,
+
+    DefaultVerifyNoneFun =
+    {fun(_,{bad_cert, _}, UserState) ->
+         {valid, UserState};
+        (_,{extension, _}, UserState) ->
+         {unknown, UserState};
+        (_, valid, UserState) ->
+         {valid, UserState};
+        (_, valid_peer, UserState) ->
+         {valid, UserState}
+     end, []},
+
+    VerifyNoneFun = handle_option(verify_fun, Opts, DefaultVerifyNoneFun),
+
+    UserFailIfNoPeerCert = handle_option(fail_if_no_peer_cert, Opts, false),
+    UserVerifyFun = handle_option(verify_fun, Opts, undefined),
+    CaCerts = handle_option(cacerts, Opts, undefined),
+
+    {Verify, FailIfNoPeerCert, CaCertDefault, VerifyFun} =
+        handle_verify_opt(proplists:get_value(verify, Opts, verify_none),
+                          VerifyNoneFun, CaCerts, UserVerifyFun, UserFailIfNoPeerCert),
+
+    CertFile = handle_option(certfile, Opts, <<>>),
+
+    Versions = case handle_option(versions, Opts, []) of
+           [] ->
+               tls_record:supported_protocol_versions();
+           Vsns  ->
+               [tls_record:protocol_version(Vsn) || Vsn <- Vsns]
+           end,
+
+    #ssl_options{
+        versions   = Versions,
+        verify     = validate_option(verify, Verify),
+        verify_fun = VerifyFun,
+        fail_if_no_peer_cert = FailIfNoPeerCert,
+        verify_client_once =  handle_option(verify_client_once, Opts, false),
+        depth      = handle_option(depth,  Opts, 1),
+        cert       = handle_option(cert, Opts, undefined),
+        certfile   = CertFile,
+        key        = handle_option(key, Opts, undefined),
+        keyfile    = handle_option(keyfile,  Opts, CertFile),
+        password   = handle_option(password, Opts, ""),
+        cacerts    = CaCerts,
+        cacertfile = handle_option(cacertfile, Opts, CaCertDefault),
+        dh         = handle_option(dh, Opts, undefined),
+        dhfile     = handle_option(dhfile, Opts, undefined),
+        user_lookup_fun = handle_option(user_lookup_fun, Opts, undefined),
+        psk_identity = handle_option(psk_identity, Opts, undefined),
+        srp_identity = handle_option(srp_identity, Opts, undefined),
+        ciphers    = handle_cipher_option(proplists:get_value(ciphers, Opts, []), hd(Versions)),
+        %% Server side option
+        reuse_session = handle_option(reuse_session, Opts, ReuseSessionFun),
+        reuse_sessions = handle_option(reuse_sessions, Opts, true),
+        secure_renegotiate = handle_option(secure_renegotiate, Opts, false),
+        renegotiate_at = handle_option(renegotiate_at, Opts, ?DEFAULT_RENEGOTIATE_AT),
+        hibernate_after = handle_option(hibernate_after, Opts, undefined),
+        erl_dist = handle_option(erl_dist, Opts, false),
+        next_protocols_advertised =
+            handle_option(next_protocols_advertised, Opts, undefined),
+        next_protocol_selector =
+            make_next_protocol_selector(
+                handle_option(client_preferred_next_protocols, Opts, undefined)),
+        log_alert = handle_option(log_alert, Opts, true),
+        server_name_indication = handle_option(server_name_indication, Opts, undefined),
+        honor_cipher_order = handle_option(honor_cipher_order, Opts, false)
+    }.
+
+handle_virtual_hosts_options(DefaultOpts, Role, VirtualHosts) ->
+    D = dict:from_list([{default, create_ssl_opts(DefaultOpts, Role)}]),
+    lists:foldl(fun({Hostname, VhostOptions}, Acc) ->
+                    VhostSSLOpts = create_ssl_opts(
+                            merge_proplists(DefaultOpts, VhostOptions), Role),
+                    dict:store(Hostname, VhostSSLOpts, Acc)
+                end, D, VirtualHosts).
+
+handle_verify_opt(Verify, VerifyNoneFun, CaCerts, UserVerifyFun, UserFailIfNoPeerCert) ->
+    %% Handle 0, 1, 2 for backwards compatibility
+    case Verify of
+        0 ->
+            {verify_none, false,
+            ca_cert_default(verify_none, VerifyNoneFun, CaCerts), VerifyNoneFun};
+        1  ->
+            {verify_peer, false,
+            ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
+        2 ->
+            {verify_peer, true,
+            ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
+        verify_none ->
+            {verify_none, false,
+            ca_cert_default(verify_none, VerifyNoneFun, CaCerts), VerifyNoneFun};
+        verify_peer ->
+            {verify_peer, UserFailIfNoPeerCert,
+            ca_cert_default(verify_peer, UserVerifyFun, CaCerts), UserVerifyFun};
+        Value ->
+            throw({error, {options, {verify, Value}}})
+    end.
 
 handle_option(OptionName, Opts, Default) ->
     validate_option(OptionName,
@@ -1088,3 +1105,6 @@ assert_proplist([inet6 | Rest]) ->
     assert_proplist(Rest);
 assert_proplist([Value | _]) ->
     throw({option_not_a_key_value_tuple, Value}).
+
+merge_proplists(L1, L2) ->
+    orddict:merge(fun(_, _, V2) -> V2 end, orddict:from_list(L1), orddict:from_list(L2)).
