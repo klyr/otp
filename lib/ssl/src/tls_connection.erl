@@ -201,24 +201,24 @@ hello(Hello = #client_hello{client_version = ClientVersion,
         {ok, Value} -> Value;
         error -> SslOpts0
     end,
-    {Session, State} = try ssl_config:init(SslOpts, State0#state.role) of
+    State = try ssl_config:init(SslOpts, State0#state.role) of
         {ok, Ref, CertDbHandle, FileRefHandle, CacheHandle, OwnCert, Key, DHParams} ->
-            Sess = Session0#session{own_certificate = OwnCert},
-            St = State0#state{
-                     session = Sess,
-                     file_ref_db = FileRefHandle,
-                     cert_db_ref = Ref,
-                     cert_db = CertDbHandle,
-                     session_cache = CacheHandle,
-                     private_key = Key,
-                     diffie_hellman_params = DHParams,
-                     ssl_options = SslOpts},
-            {Sess, St}
+            State0#state{
+                session = Session0#session{own_certificate = OwnCert},
+                file_ref_db = FileRefHandle,
+                cert_db_ref = Ref,
+                cert_db = CertDbHandle,
+                session_cache = CacheHandle,
+                private_key = Key,
+                diffie_hellman_params = DHParams,
+                ssl_options = SslOpts
+            }
         catch
             throw:Error ->
                 {stop, Error}
     end,
-    Cert = (State#state.session)#session.own_certificate,
+    Session = State#state.session,
+    Cert = Session#session.own_certificate,
     HashSign = ssl_handshake:select_hashsign(HashSigns, Cert),
     case tls_handshake:hello(Hello, SslOpts, {Port, Session, Cache, CacheCb,
                           ConnectionStates0, Cert}, Renegotiation) of
