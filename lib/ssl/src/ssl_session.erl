@@ -92,7 +92,9 @@ server_id(Port, SuggestedId, Options, Cert, Cache, CacheCb) ->
 select_session({_, _, #ssl_options{reuse_sessions=false}}, _Cache, _CacheCb, _OwnCert) ->
     no_session;
 select_session({HostIP, Port, SslOpts}, Cache, CacheCb, OwnCert) ->
+    io:format("~p:~p ==== CacheCb: ~p~n", [?FILE, ?LINE, CacheCb]),
     Sessions = CacheCb:select_session(Cache, {HostIP, Port}),
+    io:format("~p:~p ==== After CacheCb: ~p~n", [?FILE, ?LINE, CacheCb]),
     select_session(Sessions, SslOpts, OwnCert).
 
 select_session([], _, _) ->

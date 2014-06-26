@@ -48,16 +48,18 @@ client_hello(Host, Port, ConnectionStates,
 			  ciphers = UserSuites
 			 } = SslOpts,
 	     Cache, CacheCb, Renegotiation, OwnCert) ->
+    io:format("~p:~p ==== Before highest_protocol_version~n", [?FILE, ?LINE]),
     Version = tls_record:highest_protocol_version(Versions),
     Pending = ssl_record:pending_connection_state(ConnectionStates, read),
     SecParams = Pending#connection_state.security_parameters,
     CipherSuites = ssl_handshake:available_suites(UserSuites, Version),
+    io:format("~p:~p ==== Before ssl_handshake:client_hello_extensions()~n", [?FILE, ?LINE]),
     Extensions = ssl_handshake:client_hello_extensions(Host, Version, 
 						       CipherSuites,
 						       SslOpts, ConnectionStates, Renegotiation),
-
+    io:format("~p:~p ==== Before ssl_session:client_id(~p)~n", [?FILE, ?LINE, {Host, Port, SslOpts}]),
     Id = ssl_session:client_id({Host, Port, SslOpts}, Cache, CacheCb, OwnCert),
-
+    io:format("~p:~p ==== After ssl_session:client_id~n", [?FILE, ?LINE]),
     #client_hello{session_id = Id,
 		  client_version = Version,
 		  cipher_suites = ssl_handshake:cipher_suites(CipherSuites, Renegotiation),

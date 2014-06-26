@@ -170,21 +170,42 @@ hello(start, #state{host = Host, port = Port, role = client,
 		    transport_cb = Transport, socket = Socket,
 		    connection_states = ConnectionStates0,
 		    renegotiation = {Renegotiation, _}} = State0) ->
-    Hello = tls_handshake:client_hello(Host, Port, ConnectionStates0, SslOpts,
-				       Cache, CacheCb, Renegotiation, Cert),
-    
-    Version = Hello#client_hello.client_version,
-    Handshake0 = ssl_handshake:init_handshake_history(),
-    {BinMsg, ConnectionStates, Handshake} =
-        encode_handshake(Hello, Version, ConnectionStates0, Handshake0),
-    Transport:send(Socket, BinMsg),
-    State1 = State0#state{connection_states = ConnectionStates,
-			  negotiated_version = Version, %% Requested version
-			  session =
-			      Session0#session{session_id = Hello#client_hello.session_id},
-			  tls_handshake_history = Handshake},
-    {Record, State} = next_record(State1),
-    next_state(hello, hello, Record, State);
+    io:format("~p:~p === STATE Hello, Event start~n", [?FILE, ?LINE]),
+    try ssl_config:init(SslOpts, State0#state.role) of
+        {ok, Ref, CertDbHandle, FileRefHandle, CacheHandle, OwnCert, Key, DHParams} ->
+            State1 = State0#state{
+                session = Session0#session{own_certificate = OwnCert},
+                file_ref_db = FileRefHandle,
+                cert_db_ref = Ref,
+                cert_db = CertDbHandle,
+                session_cache = CacheHandle,
+                private_key = Key,
+                diffie_hellman_params = DHParams,
+                ssl_options = SslOpts
+            },
+            io:format("~p:~p === Before tls_handshake:client_hello~n", [?FILE, ?LINE]),
+            Hello = tls_handshake:client_hello(Host, Port, ConnectionStates0, SslOpts,
+                Cache, CacheCb, Renegotiation, Cert),
+            io:format("~p:~p === After tls_handshake:client_hello~n", [?FILE, ?LINE]),
+            Version = Hello#client_hello.client_version,
+            Handshake0 = ssl_handshake:init_handshake_history(),
+            io:format("~p:~p === Before encode_handshake~n", [?FILE, ?LINE]),
+            {BinMsg, ConnectionStates, Handshake} =
+                encode_handshake(Hello, Version, ConnectionStates0, Handshake0),
+            io:format("~p:~p === After encode_handshake~n", [?FILE, ?LINE]),
+            Transport:send(Socket, BinMsg),
+            State2 = State1#state{connection_states = ConnectionStates,
+                negotiated_version = Version, %% Requested version
+                session = Session0#session{session_id = Hello#client_hello.session_id},
+                tls_handshake_history = Handshake},
+            {Record, State} = next_record(State2),
+            next_state(hello, hello, Record, State)
+        catch
+            throw:Error ->
+                {stop, Error}
+    end;
+
+
 
 hello(Hello = #client_hello{client_version = ClientVersion,
 			    extensions = #hello_extensions{hash_signs = HashSigns,
@@ -197,9 +218,13 @@ hello(Hello = #client_hello{client_version = ClientVersion,
 		     session_cache = Cache,
 		     session_cache_cb = CacheCb,
 		     ssl_options = SslOpts0}) ->
-    SslOpts = case dict:find(Hostname, SslOpts0#ssl_options.virtual_hosts) of
-        {ok, Value} -> Value;
-        error -> SslOpts0
+    io:format("~p:~p === STATE Hello, Event #client_hello{}~n", [?FILE, ?LINE]),
+    SslOpts = case SslOpts0#ssl_options.virtual_hosts of
+        undefined -> SslOpts0;
+        _ -> case dict:find(Hostname, SslOpts0#ssl_options.virtual_hosts) of
+                {ok, Value} -> Value;
+                error -> SslOpts0
+             end
     end,
     State = try ssl_config:init(SslOpts, State0#state.role) of
         {ok, Ref, CertDbHandle, FileRefHandle, CacheHandle, OwnCert, Key, DHParams} ->
@@ -237,6 +262,7 @@ hello(Hello,
 	     role = client,
 	     renegotiation = {Renegotiation, _},
 	     ssl_options = SslOptions} = State) ->
+    io:format("~p:~p === STATE Hello, Event Hello (role = client)~n", [?FILE, ?LINE]),
     case tls_handshake:hello(Hello, SslOptions, ConnectionStates0, Renegotiation) of
 	#alert{} = Alert ->
 	    handle_own_alert(Alert, ReqVersion, hello, State);
@@ -246,6 +272,7 @@ hello(Hello,
     end;
 
 hello(Msg, State) ->
+    io:format("~p:~p === STATE Hello, Event Msg (catchall)~n", [?FILE, ?LINE]),
     ssl_connection:hello(Msg, State, ?MODULE).
 
 abbreviated(Msg, State) ->

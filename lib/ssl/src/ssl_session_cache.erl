@@ -81,6 +81,7 @@ foldl(Fun, Acc0, Cache) ->
 %% from any process.
 %%--------------------------------------------------------------------
 select_session(Cache, PartialKey) ->    
+    io:format("~p:~p ==== BLA~n", [?FILE, ?LINE]),
     ets:select(Cache, 
 	       [{{{PartialKey,'$1'}, '$2'},[],['$$']}]).
 

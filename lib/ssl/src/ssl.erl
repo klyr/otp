@@ -569,7 +569,7 @@ handle_options(Opts0, Role) ->
 			     {list, [{mode, list}]}], Opts0),
 
     SSLOptions0 = create_ssl_opts(Opts, Role),
-    VirtualHosts = handle_option(virtual_hosts, Opts, []),
+    VirtualHosts = handle_option(virtual_hosts, Opts, undefined),
     Hosts = handle_virtual_hosts_options(Opts0, Role, VirtualHosts),
     %%io:format("~p:~p === Vhosts: ~p~n", [?FILE, ?LINE, dict:fetch("sni.host1.example.com", Hosts)]),
     SSLOptions = SSLOptions0#ssl_options{virtual_hosts = Hosts},
@@ -668,6 +668,8 @@ create_ssl_opts(Opts, _Role) ->
         honor_cipher_order = handle_option(honor_cipher_order, Opts, false)
     }.
 
+handle_virtual_hosts_options(_, _, undefined) ->
+    undefined;
 handle_virtual_hosts_options(DefaultOpts, Role, VirtualHosts) ->
     D = dict:from_list([{default, create_ssl_opts(DefaultOpts, Role)}]),
     lists:foldl(fun({Hostname, VhostOptions}, Acc) ->
@@ -860,6 +862,8 @@ validate_option(server_name_indication, disable) ->
 validate_option(server_name_indication, undefined) ->
     undefined;
 validate_option(honor_cipher_order, Value) when is_boolean(Value) ->
+    Value;
+validate_option(virtual_hosts, Value = undefined) ->
     Value;
 validate_option(virtual_hosts, Value) when is_list(Value) ->
     ValidOptions = [verify, verify_fun, fail_if_no_peer_cert, depth, cert,
